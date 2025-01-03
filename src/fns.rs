@@ -67,14 +67,20 @@ tri!(ph3);
 
 
 /// execute monadic fn, automatic iteration
-pub(crate) fn exec1(f: Mon, mut a: &Value) -> Result<Value, FnErr> {
+pub(crate) fn exec1(f: Mon, mut a: &Value, m: bool) -> Result<Value, FnErr> {
 	
 	todo!()
 }
 
 /// execute dyadic fn, automatic iteration
-pub(crate) fn exec2(f: Dya, mut a: &Value, mut b: &Value) -> Result<Value, FnErr> {
+pub(crate) fn exec2(f: Dya, mut a: &Value, mut b: &Value, m:bool) -> Result<Value, FnErr> {
 	
+	todo!()
+}
+
+/// execute triadic fn, automatic iteration
+pub(crate) fn exec3(f: Tri, mut a: &Value, mut b: &Value, mut c: &Value, m:bool) -> Result<Value, FnErr> {
+
 	todo!()
 }
 

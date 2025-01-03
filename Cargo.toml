@@ -1,7 +1,8 @@
 [package]
 name = "adc-lang"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+repository = "https://github.com/43615/adc-lang"
 description = "Array-oriented reimagining of dc, a terse stack-based esolang"
 license = "Unlicense"
 
