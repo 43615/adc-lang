@@ -4,7 +4,7 @@ use malachite::Integer;
 use crate::structs::Value;
 
 #[derive(Debug)]
-pub(crate) enum FnErr {
+pub enum FnErr {
 	Type1(TypeLabel),
 	Type2(TypeLabel, TypeLabel),
 	Type3(TypeLabel, TypeLabel, TypeLabel),
@@ -21,7 +21,7 @@ impl Display for FnErr {
 			Self::Type3(ta,tb,tc) => {write!(f, "values of invalid types: {ta}, {tb}, {tc}")}
 			Self::Len(la,lb) => {write!(f, "arrays of different length: {la}, {lb}")}
 			Self::Index(ia) => {write!(f, "index out of range: {ia}")}
-			Self::Arith(s) => {write!(f, "arithmetic error: result is {s}")}
+			Self::Arith(s) => {write!(f, "arithmetic error: {s}")}
 			Self::Custom(s) => {write!(f, "{s}")}
 		}
 	}

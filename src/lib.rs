@@ -38,7 +38,7 @@ enum CmdType {
 	Special,
 
 	///begin value literal
-	Value,
+	Lit,
 
 	///no command
 	Space,
@@ -53,7 +53,7 @@ enum CmdType {
 /// Direct mapping of ASCII to commands/functions, mostly a jump table
 /// 
 /// PHFs are for non-schizophrenics
-const CMDS: [CmdType; 128] = {
+static CMDS: [CmdType; 128] = {
 	use CmdType::*;
 	use fns::*;
 	use cmds::*;
@@ -65,16 +65,16 @@ const CMDS: [CmdType; 128] = {
 		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,
 
 		//SP		!			"			#			$			%			&			'			(			)			*			+			,			-			.			/
-		Space,		Fn1(inv),	Temp,		Special,	Temp,		Fn2(ph2),	Temp,		Value,		Value,		Wrong,		Fn2(mul),	Fn2(add),	Cmd(phc),	Fn2(sub),	Special,	Fn2(div),
+		Space,		Fn1(inv),	Temp,		Special,	Temp,		Fn2(ph2),	Temp,		Lit,		Lit,		Wrong,		Fn2(mul),	Fn2(add),	Cmd(phc),	Fn2(sub),	Special,	Fn2(div),
 
 		//0			1			2			3			4			5			6			7			8			9			:			;			<			=			>			?
-		Value,		Value,		Value,		Value,		Value,		Value,		Value,		Value,		Value,		Value,		Special,	Cmd(phc),	Fn2(ph2),	Fn2(ph2),	Fn2(ph2),	Special,
+		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Special,	Cmd(phc),	Fn2(ph2),	Fn2(ph2),	Fn2(ph2),	Special,
 
 		//@			A			B			C			D			E			F			G			H			I			J			K			L			M			N			O
-		Value,		Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Value,		Temp,		Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),
+		Lit,		Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Lit,		Temp,		Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
-		Special,	Special,	Cmd(phc),	CmdR(phr),	Value,		Temp,		Temp,		Temp,		Special,	Temp,		Temp,		Value,		Special,	Wrong,		Fn2(pow),	Temp,
+		Special,	Special,	Cmd(phc),	CmdR(phr),	Lit,		Temp,		Temp,		Temp,		Special,	Temp,		Temp,		Lit,		Special,	Wrong,		Fn2(pow),	Temp,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
 		Special,	Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Temp,		Temp,		Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),

@@ -4,11 +4,13 @@
 
 #![allow(dead_code)]	//TODO: make not dead
 
+use std::collections::{VecDeque};
+use std::ptr::NonNull;
 use malachite::{Integer, Rational};
 use malachite::num::arithmetic::traits::{Pow, Reciprocal};
+use malachite::num::basic::traits::{NegativeOne, Zero};
 use malachite::num::conversion::traits::{RoundingFrom, RoundingInto};
 use regex::Regex;
-use crate::conv::rtf2;
 use crate::structs::Value::{self, *};
 use crate::errors::FnErr::{self, *};
 use crate::conv::*;
@@ -19,7 +21,7 @@ pub(crate) type Mon = fn(&Value, bool) -> Result<Value, FnErr>;
 /// Monadic template with standard type matching
 macro_rules! mon {
     ($name:ident $($pa:pat, $m:pat => $op:expr)*) => {
-		#[inline(always)] pub(crate) fn $name(a: &Value, m: bool) -> Result<Value, FnErr> {
+		#[inline(always)] pub fn $name(a: &Value, m: bool) -> Result<Value, FnErr> {
 			match (a,m) {
 				$(($pa, $m) => $op,)*
 				_ => Err(Type1(a.into()))
@@ -67,19 +69,39 @@ tri!(ph3);
 
 
 /// execute monadic fn, automatic iteration
-pub(crate) fn exec1(f: Mon, mut a: &Value, m: bool) -> Result<Value, FnErr> {
-	
-	todo!()
+pub fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
+	if let A(aa) = a { unsafe {	//iterate through array, bfs without recursion
+		//NonNull pointers are required because of aliasing rules, soundness is ensured manually
+		let mut az: Vec<Value> = Vec::new();	//resulting array
+		let mut q: VecDeque<(&Vec<Value>, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays
+		q.push_back((aa, (&mut az).into()));
+		while let Some((src, mut dst)) = q.pop_front() {	//keep reading from front of queue
+			for val in src {	//iter current layer
+				if let A(nsrc) = val {	//array encountered, pseudorecursion needed
+					dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
+					let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
+					q.push_back((nsrc, ndst.into()));	//add next layer vecs to queue
+				}
+				else {	//plain value, compute and store result
+					dst.as_mut().push(f(val, m)?);
+				}
+			}
+		}
+		Ok(A(az))
+	}}
+	else {	//just call function
+		f(a, m)
+	}
 }
 
 /// execute dyadic fn, automatic iteration
-pub(crate) fn exec2(f: Dya, mut a: &Value, mut b: &Value, m:bool) -> Result<Value, FnErr> {
+pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
 	
 	todo!()
 }
 
 /// execute triadic fn, automatic iteration
-pub(crate) fn exec3(f: Tri, mut a: &Value, mut b: &Value, mut c: &Value, m:bool) -> Result<Value, FnErr> {
+pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, FnErr> {
 
 	todo!()
 }
@@ -133,7 +155,14 @@ dya!(mul
 );
 
 dya!(div
-	N(na), N(ba), _ => Ok(N(na / ba))	//divide numbers
+	N(na), N(nb), _ => {	//divide numbers
+		if *nb != Rational::ZERO {
+			Ok(N(na / nb))
+		}
+		else {
+			Err(Arith("division by 0".into()))
+		}		
+	}
 );
 
 mon!(inv	
@@ -159,7 +188,7 @@ dya!(pow
 			Ok(N(sa.char_indices().position(|(cidx, _)| cidx==bidx).unwrap().into()))	//char position
 		}
 		else {
-			Ok(N(Rational::from(-1_i8)))
+			Ok(N(Rational::NEGATIVE_ONE))
 		}
 	}
 	
@@ -172,7 +201,7 @@ dya!(pow
 			]))
 		}
 		else {
-			Ok(N(Rational::from(-1_i8)))
+			Ok(N(Rational::NEGATIVE_ONE))
 		}
 	}
 	

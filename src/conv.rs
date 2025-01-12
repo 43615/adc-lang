@@ -23,9 +23,9 @@ use crate::errors::FnErr::{self, *};
 
 #[inline(always)] pub(crate) fn ftr1(fa: f64) -> Result<Rational, FnErr> {
 	Rational::try_from(fa).map_err(|_| {
-		if fa.is_nan() {Arith("NaN".into())}
-		else if fa == f64::INFINITY {Arith("+∞".into())}
-		else {Arith("-∞".into())}
+		if fa.is_nan() {Arith("result is NaN".into())}
+		else if fa == f64::INFINITY {Arith("result is +∞".into())}
+		else {Arith("result is -∞".into())}
 	})
 }
 

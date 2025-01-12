@@ -3,6 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::RwLock;
 use std::thread::JoinHandle;
+use std::mem::ManuallyDrop;
 use malachite::{Rational, Integer, Natural};
 use regex::{Regex, RegexBuilder};
 use bit_vec::BitVec;
@@ -159,7 +160,7 @@ impl Macro {
 	#[inline(always)] pub(crate) fn next(&mut self) -> (Option<char>, bool) {
 		match self {
 			Self::Once(s, i) => {
-				if *i<s.len() {
+				if *i<s.len() { 
 					(Some(unsafe{parse_utf8_unchecked(s, i)}), true)
 				}
 				else {(None, false)}
@@ -240,7 +241,7 @@ impl Default for ParamStk {
 }
 
 pub struct State {
-	mstk: Vec<Value>,
+	mstk: Vec<ManuallyDrop<Value>>,
 	regs: RegStore,
 
 }
