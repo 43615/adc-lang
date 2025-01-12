@@ -39,7 +39,7 @@ impl From<&Value> for TypeLabel {
 			B(_) => Self::B,
 			N(_) => Self::N,
 			S(_) => Self::S,
-			A(_)|AB(_) => Self::A
+			A(_) => Self::A
 		}
 	}
 }

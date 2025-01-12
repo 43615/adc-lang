@@ -10,11 +10,10 @@ use bit_vec::BitVec;
 
 #[derive(Debug, Clone)]
 pub enum Value {
-	B(bool),
+	B(BitVec),
 	N(Rational),
 	S(String),
-	A(Vec<Value>),
-	AB(BitVec)
+	A(Vec<Value>)
 }
 
 #[derive(Default)]

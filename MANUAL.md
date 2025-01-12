@@ -44,14 +44,14 @@ In addition, there are also named stacks called *registers*. More on them in the
 The basic units of data are called "values". Instead of the familiar concept of named variables, values are self-contained items that can be moved around arbitrarily. The only identifier of a value is its current location.
 
 All values have one of the following *types*:
-- Boolean: `T` or `F`
+- Boolean: sequence of `T` (true) and `F` (false)
 - Number (rational): `123.456`
 - String (sequence of characters): `[written in brackets]`
 - Array (containing other values): `([example] 1 2 3)`
 
 In the following documentation, the abbreviations *B*, *N*, *S* and *A* are used. *X* means "any type". Compound types like *AN* (array of numbers) are also used.
 
-This specific order is also the hierarchy in which the basic types (*B*, *N*, *S*) are considered to be composed of each other: A string is like an array of numbers (character values) and a number is like an array of booleans (bit representation). Values can be easily converted up or down this hierarchy if needed.
+This specific order is also the hierarchy in which the basic types (*B*, *N*, *S*) are considered to be composed of each other: A string is like an array of numbers (character values) and a number is like a sequence of booleans (bit representation). Values can be easily converted up or down this hierarchy if needed.
 
 
 # Command structure and execution

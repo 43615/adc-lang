@@ -107,22 +107,22 @@ pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<
 }
 
 dya!(add
-	B(ba), B(bb), _ => Ok(B(*ba || *bb))	//boolean or
+	B(ba), B(bb), _ => {	//boolean or (packed)
+		if ba.len() == bb.len() {
+			let mut res = ba.to_owned();
+			res.or(bb);
+			Ok(B(res))
+		}
+		else {
+			Err(Arith(
+				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+			))
+		}
+	}
 	
 	N(na), N(nb), _ => Ok(N(na + nb))	//add numbers
 	
 	S(sa), S(sb), _ => Ok(S(sa.to_owned() + sb))	//concat strings
-	
-	AB(aba), AB(abb), _ => {	//boolean or (packed)
-		if aba.len() == abb.len() {
-			let mut res = aba.to_owned();
-			res.or(abb);
-			Ok(AB(res))
-		}
-		else {
-			Err(Len(aba.len(), abb.len()))
-		}
-	}
 );
 
 dya!(sub
@@ -130,7 +130,18 @@ dya!(sub
 );
 
 dya!(mul
-	B(ba), B(bb), _ => Ok(B(*ba && *bb))	//boolean and
+	B(ba), B(bb), _ => {	//boolean and (packed)
+		if ba.len() == bb.len() {
+			let mut res = ba.to_owned();
+			res.and(bb);
+			Ok(B(res))
+		}
+		else {
+			Err(Arith(
+				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+			))
+		}
+	}
 
 	N(na), N(nb), _ => Ok(N(na * nb))	//multiply numbers
 	
@@ -139,17 +150,6 @@ dya!(mul
 		match usize::try_from(&ib) {
 			Ok(ub) if sa.len().checked_mul(ub).is_some() => Ok(S(sa.repeat(ub))),
 			_ => Err(Index(ib.to_owned()))
-		}
-	}
-	
-	AB(aba), AB(abb), _ => {	//boolean and (packed)
-		if aba.len() == abb.len() {
-			let mut res = aba.to_owned();
-			res.and(abb);
-			Ok(AB(res))
-		}
-		else {
-			Err(Len(aba.len(), abb.len()))
 		}
 	}
 );
@@ -166,17 +166,26 @@ dya!(div
 );
 
 mon!(inv	
-	B(ba), _ => Ok(B(!ba))	//negate boolean
+	B(ba), _ => Ok(B({let mut res = ba.to_owned(); res.negate(); res}))	//negate boolean
 	
 	N(na), _ => Ok(N(na.reciprocal()))	//reciprocate number
 	
 	S(sa), _ => Ok(S(sa.chars().rev().collect()))	//reverse string
-	
-	AB(aba), _ => Ok(AB({let mut res = aba.to_owned(); res.negate(); res}))	//negate packed booleans
 );
 
 dya!(pow
-	B(ba), B(bb), _ => Ok(B(ba != bb))	//boolean xor
+	B(ba), B(bb), _ => {	//boolean xor
+		if ba.len() == bb.len() {
+			let mut res = ba.to_owned();
+			res.xor(bb);
+			Ok(B(res))
+		}
+		else {
+			Err(Arith(
+				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+			))
+		}
+	}
 	
 	N(na), N(nb), _ => {	//raise number to power
 		let (fa, fb) = rtf2(na, nb);
@@ -202,17 +211,6 @@ dya!(pow
 		}
 		else {
 			Ok(N(Rational::NEGATIVE_ONE))
-		}
-	}
-	
-	AB(aba), AB(abb), _ => {	//boolean xor (packed)
-		if aba.len() == abb.len() {
-			let mut res = aba.to_owned();
-			res.xor(abb);
-			Ok(AB(res))
-		}
-		else {
-			Err(Len(aba.len(), abb.len()))
 		}
 	}
 );
