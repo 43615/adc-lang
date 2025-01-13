@@ -50,9 +50,9 @@ enum CmdType {
 	Temp
 }
 
-/// Direct mapping of ASCII to commands/functions, mostly a jump table
+/// Direct mapping of ASCII to commands/functions, mostly a jump table.
 /// 
-/// PHFs are for non-schizophrenics
+/// Annotations are meant for a tab width of 4.
 static CMDS: [CmdType; 128] = {
 	use CmdType::*;
 	use fns::*;
@@ -77,7 +77,7 @@ static CMDS: [CmdType; 128] = {
 		Special,	Special,	Cmd(phc),	CmdR(phr),	Lit,		Temp,		Temp,		Temp,		Special,	Temp,		Temp,		Lit,		Special,	Wrong,		Fn2(pow),	Temp,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
-		Special,	Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Temp,		Temp,		Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),
+		Special,	Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Temp,		Fn1(log),	Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
 		Special,	Special,	Cmd(phc),	CmdR(phr),	Temp,		Temp,		Temp,		Temp,		Special,	Temp,		Temp,		Temp,		Fn3(ph3),	Temp,		Fn2(ph2),	Wrong

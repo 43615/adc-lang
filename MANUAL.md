@@ -44,7 +44,7 @@ In addition, there are also named stacks called *registers*. More on them in the
 The basic units of data are called "values". Instead of the familiar concept of named variables, values are self-contained items that can be moved around arbitrarily. The only identifier of a value is its current location.
 
 All values have one of the following *types*:
-- Boolean: sequence of `T` (true) and `F` (false)
+- Boolean: sequence of `T` (true) and `F` (false) bits
 - Number (rational): `123.456`
 - String (sequence of characters): `[written in brackets]`
 - Array (containing other values): `([example] 1 2 3)`
@@ -137,7 +137,6 @@ For base 37 and above, a special `'enclosed'` format must be used. Numbers are r
 - `Na Nb + -> Nz` adds two numbers.
 - `Na Nb - -> Nz` subtracts *b* from *a*.
 - `Na Nb * -> Nz` multiplies two numbers.
-  - `Na Bb * -> Nz` multiplies with a boolean: `T`=1, `F`=0.
 - `Na Nb / -> Nz` divides *a* by *b*.
 
 
@@ -165,4 +164,4 @@ Secondary storage locations that can be accessed in various ways.
 Strings can be executed by the `x` command, which has several overloaded modes:
 - `Sa x` simply executes string *a* as a series of ADC commands.
 - `Sa Nb x` executes *a* *b* times.
-- `Sa Bb x` executes *a* if *b* is `T`.
+- `Sa Bb x` executes *a* once for every `T` bit in *b*.
