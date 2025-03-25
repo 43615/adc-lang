@@ -1,6 +1,7 @@
 //! Nontrivial conversion functions
 
 use malachite::{Rational, Integer, Natural};
+use malachite::num::arithmetic::traits::Abs;
 use malachite::num::conversion::traits::{RoundingFrom, RoundingInto};
 use malachite::rounding_modes::RoundingMode;
 use crate::errors::FnErr::{self, *};
@@ -11,6 +12,18 @@ use crate::errors::FnErr::{self, *};
 
 #[inline(always)] pub(crate) fn r_i2(ra: &Rational, rb: &Rational) -> (Integer, Integer) {
 	(r_i1(ra), r_i1(rb))
+}
+
+#[inline(always)] pub(crate) fn r_n1(ra: &Rational) -> Natural {
+	Natural::rounding_from(ra.abs(), RoundingMode::Down).0
+}
+
+#[inline(always)] pub(crate) fn r_n2(ra: &Rational, rb: &Rational) -> (Natural, Natural) {
+	(r_n1(ra), r_n1(rb))
+}
+
+#[inline(always)] pub(crate) fn r_n3(ra: &Rational, rb: &Rational, rc: &Rational) -> (Natural, Natural, Natural) {
+	(r_n1(ra), r_n1(rb), r_n1(rc))
 }
 
 #[inline(always)] pub(crate) fn r_f1(ra: &Rational) -> f64 {

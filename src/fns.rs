@@ -5,9 +5,10 @@
 #![allow(dead_code)]	//TODO: make not dead
 
 use std::collections::{VecDeque};
+use std::iter::repeat;
 use std::ptr::NonNull;
 use malachite::{Integer, Rational};
-use malachite::num::arithmetic::traits::{Pow, Reciprocal};
+use malachite::num::arithmetic::traits::{DivRem, Mod, ModInverse, ModPow, Pow, Reciprocal};
 use malachite::num::basic::traits::{NegativeOne, Zero};
 use malachite::num::conversion::traits::{RoundingFrom, RoundingInto};
 use regex::Regex;
@@ -68,7 +69,7 @@ dya!(ph2);
 tri!(ph3);
 
 
-/// execute monadic fn, recurse through arrays
+/// execute monadic fn, pseudorecursion through nested arrays
 pub(crate) fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 	if let A(aa) = a { unsafe {	//iterate through array, bfs without recursion
 		//NonNull pointers are required because of aliasing rules, soundness is ensured manually
@@ -94,7 +95,7 @@ pub(crate) fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 	}
 }
 
-/// execute dyadic fn, recurse through arrays
+/// execute dyadic fn, pseudorecursion through nested arrays
 pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
 	match (a, b) {
 		(A(_), A(_)) | (A(_), _) | (_, A(_)) => { unsafe {	//iterate through array(s), bfs without recursion
@@ -164,7 +165,7 @@ pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnEr
 	}
 }
 
-/// execute triadic fn, recurse through arrays
+/// execute triadic fn, pseudorecursion through nested arrays
 pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, FnErr> {
 	match (a, b, c) {
 		(A(_), A(_), A(_)) |
@@ -309,7 +310,7 @@ pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<
 						}
 					}
 					(_, _, _) => {	//current entry is three values
-						unreachable!();
+						std::hint::unreachable_unchecked()
 					}
 				}
 			}
@@ -328,7 +329,7 @@ dya!(add
 		Ok(B(res))
 	}
 
-	N(na), N(nb), _ => Ok(N(na + nb))	//add numbers
+	N(ra), N(rb), _ => Ok(N(ra + rb))	//add numbers
 	
 	S(sa), S(sb), _ => Ok(S(sa.to_owned() + sb))	//concat strings
 );
@@ -347,7 +348,7 @@ dya!(sub
 		}
 	}
 	
-	N(na), N(nb), _ => Ok(N(na - nb))	//subtract numbers
+	N(ra), N(rb), _ => Ok(N(ra - rb))	//subtract numbers
 );
 
 dya!(mul
@@ -364,10 +365,10 @@ dya!(mul
 		}
 	}
 
-	N(na), N(nb), _ => Ok(N(na * nb))	//multiply numbers
+	N(ra), N(rb), _ => Ok(N(ra * rb))	//multiply numbers
 	
-	S(sa), N(nb), _ => {	//repeat string
-		let ib = r_i1(nb);
+	S(sa), N(rb), _ => {	//repeat string
+		let ib = r_i1(rb);
 		match usize::try_from(&ib) {
 			Ok(ub) if sa.len().checked_mul(ub).is_some() => Ok(S(sa.repeat(ub))),
 			_ => Err(Index(ib.to_owned()))
@@ -389,9 +390,9 @@ dya!(div
 		}
 	}
 	
-	N(na), N(nb), _ => {	//divide numbers
-		if *nb != Rational::ZERO {
-			Ok(N(na / nb))
+	N(ra), N(rb), _ => {	//divide numbers
+		if *rb != Rational::ZERO {
+			Ok(N(ra / rb))
 		}
 		else {
 			Err(Arith("division by 0".into()))
@@ -402,7 +403,7 @@ dya!(div
 mon!(inv	
 	B(ba), _ => Ok(B({let mut res = ba.to_owned(); res.negate(); res}))	//negate boolean
 	
-	N(na), _ => Ok(N(na.reciprocal()))	//reciprocate number
+	N(ra), _ => Ok(N(ra.reciprocal()))	//reciprocate number
 	
 	S(sa), _ => Ok(S(sa.chars().rev().collect()))	//reverse string
 );
@@ -421,8 +422,8 @@ dya!(pow
 		}
 	}
 	
-	N(na), N(nb), _ => {	//raise number to power
-		let (fa, fb) = r_f2(na, nb);
+	N(ra), N(rb), _ => {	//raise number to power
+		let (fa, fb) = r_f2(ra, rb);
 		f_r1(fa.powf(fb)).map(N)
 	}
 	
@@ -452,9 +453,117 @@ dya!(pow
 mon!(log
 	B(ba), _ => Ok(N(ba.len().into()))	//length of boolean
 	
-	N(na), _ => f_r1(r_f1(na).ln()).map(N)	//natural log of number
+	N(ra), _ => f_r1(r_f1(ra).ln()).map(N)	//natural log of number
 	
 	S(sa), false => Ok(N(sa.chars().count().into()))	//char length of string
 	
 	S(sa), true => Ok(N(sa.len().into()))	//byte length of string
+);
+
+dya!(logb
+	N(ra), N(rb), _ => {	//base b log of a
+		let (fa, fb) = r_f2(ra, rb);
+		f_r1(fa.log(fb)).map(N)
+	}
+);
+
+dya!(r#mod
+	N(ra), N(rb), _ => {	//modulo
+		let (ia, ib) = r_i2(ra, rb);
+		if ib != Rational::ZERO {
+			Ok(N(ia.mod_op(ib).into()))
+		}
+		else {
+			Err(Arith("reduction mod 0".into()))
+		}
+	}
+
+	S(sa), N(rb), _ => {	//extract char
+		let ib = r_i1(rb);
+		if let Ok(ub) = usize::try_from(&ib) {
+			Ok(S(sa.chars().nth(ub).map(|c| c.into()).unwrap_or_default()))
+		}
+		else {
+			Err(Index(ib))
+		}
+	}
+);
+
+dya!(euc
+	B(ba), N(rb), _ => {	//split boolean
+		let ib = r_i1(rb);
+		if let Ok(ub) = usize::try_from(&ib) {
+			if ub < ba.len() {
+				let mut by = ba.to_owned();
+				let bz = by.split_off(ub);
+				Ok(A(vec![B(by), B(bz)]))
+			}
+			else {
+				Err(Index(ib))
+			}
+		}
+		else {
+			Err(Index(ib))
+		}
+	}
+
+	N(ra), N(rb), _ => {	//euclidean division
+		let (ia, ib) = r_i2(ra, rb);
+		if ib != Rational::ZERO {
+			let (quot, rem) = ia.div_rem(ib);
+			Ok(A(vec![
+				N(quot.into()),
+				N(rem.into())
+			]))
+		}
+		else {
+			Err(Arith("reduction mod 0".into()))
+		}
+	}
+
+	S(sa), N(rb), _ => {	//split string at char
+		let ib = r_i1(rb);
+		if let Ok(ub) = usize::try_from(&ib) {
+			let bidx = sa.char_indices().position(|(cidx, _)| cidx==ub).unwrap();
+			if bidx < sa.len() {
+				let mut sy = sa.to_owned();
+				let sz = sy.split_off(bidx);
+				Ok(A(vec![S(sy), S(sz)]))
+			}
+			else {
+				Err(Index(ib))
+			}
+		}
+		else {
+			Err(Index(ib))
+		}
+	}
+);
+
+tri!(bar
+	B(ba), b, c, _ => {	//selection (a ? b : c)
+		if ba.len() == 1 {	//plain value
+			if ba[0] {Ok(b.to_owned())} else {Ok(c.to_owned())}
+		}
+		else {	//array of values for each bit
+			Ok(A(
+				ba.iter().map(|bit| if bit {b.to_owned()} else {c.to_owned()}).collect()
+			))
+		}
+	}
+
+	N(ra), N(rb), N(rc), _ => {	//modular exponentiation (a ^ b mod c)
+		let (mut na, nb, nc) = r_n3(ra, rb, rc);
+		if rb < &Rational::ZERO {	//find inverse if exponent is negative
+			na = (&na % &nc).mod_inverse(&nc).ok_or_else(|| Arith(format!("{na} doesn't have an inverse mod {nc}")))?;
+		}
+		Ok(N((na % &nc).mod_pow(nb, nc).into()))
+	}
+	
+	S(sa), S(sb), S(sc), false => Ok(S(sa.replace(sb, sc)))	//replace substrings by literal
+	
+	S(sa), S(sb), S(sc), true => {	//replace substrings by regex
+		let re = RE_CACHE.get(sb).map_err(Custom)?;
+		Ok(S(re.replace_all(sa, sc).into()))
+	}
 );

@@ -51,6 +51,7 @@ impl std::ops::IndexMut<&Integer> for RegStore {
 	}
 }
 
+#[derive(Default)]
 #[repr(transparent)] pub struct RegexCache(pub RwLock<HashMap<String, Regex>>);
 
 impl RegexCache {

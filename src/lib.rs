@@ -11,12 +11,15 @@ pub mod errors;
 pub mod conv;
 
 use std::collections::HashMap;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use lazy_static::lazy_static;
 
 lazy_static! {
-	pub(crate) static ref RE_CACHE: structs::RegexCache = structs::RegexCache(RwLock::new(HashMap::new()));
+	pub(crate) static ref RE_CACHE: structs::RegexCache = structs::RegexCache::default();
 }
+
+/// Debug flag (set by `-d` option in this crate's CLI binary wrapper). Information about executed commands will be printed to stderr.
+pub static DEBUG: OnceLock<()> = OnceLock::new();
 
 enum CmdType {
 	///monadic pure function
@@ -65,13 +68,13 @@ static CMDS: [CmdType; 128] = {
 		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,
 
 		//SP		!			"			#			$			%			&			'			(			)			*			+			,			-			.			/
-		Space,		Fn1(inv),	Temp,		Special,	Temp,		Fn2(ph2),	Temp,		Lit,		Lit,		Wrong,		Fn2(mul),	Fn2(add),	Cmd(phc),	Fn2(sub),	Special,	Fn2(div),
+		Space,		Fn1(inv),	Temp,		Special,	Temp,		Fn2(r#mod),	Temp,		Lit,		Lit,		Wrong,		Fn2(mul),	Fn2(add),	Cmd(phc),	Fn2(sub),	Special,	Fn2(div),
 
 		//0			1			2			3			4			5			6			7			8			9			:			;			<			=			>			?
 		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Special,	Cmd(phc),	Fn2(ph2),	Fn2(ph2),	Fn2(ph2),	Special,
 
 		//@			A			B			C			D			E			F			G			H			I			J			K			L			M			N			O
-		Lit,		Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Lit,		Temp,		Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),
+		Lit,		Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Lit,		Fn2(logb),	Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
 		Special,	Special,	Cmd(phc),	CmdR(phr),	Lit,		Temp,		Temp,		Temp,		Special,	Temp,		Temp,		Lit,		Special,	Wrong,		Fn2(pow),	Temp,
@@ -80,6 +83,6 @@ static CMDS: [CmdType; 128] = {
 		Special,	Temp,		Temp,		Cmd(phc),	Cmd(phc),	Temp,		Temp,		Fn1(log),	Temp,		Cmd(phc),	Temp,		Cmd(phc),	CmdR(phr),	Temp,		Temp,		Cmd(phc),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Special,	Special,	Cmd(phc),	CmdR(phr),	Temp,		Temp,		Temp,		Temp,		Special,	Temp,		Temp,		Temp,		Fn3(ph3),	Temp,		Fn2(ph2),	Wrong
+		Special,	Special,	Cmd(phc),	CmdR(phr),	Temp,		Temp,		Temp,		Temp,		Special,	Temp,		Temp,		Temp,		Fn3(bar),	Temp,		Fn2(euc),	Wrong
 	]
 };

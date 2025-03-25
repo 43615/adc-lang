@@ -57,4 +57,4 @@ impl Display for TypeLabel {
 			}
 		)
 	}
-	}
+}
