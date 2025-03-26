@@ -104,56 +104,16 @@ pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnEr
 			let mut q: VecDeque<(&Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays
 			q.push_back((a, b, (&mut az).into()));
 			while let Some((a, b, mut dst)) = q.pop_front() {	//keep reading from front of queue
-				match (a, b) {
-					(A(aa), A(ab)) => {	//current entry is two arrays
-						if aa.len() == ab.len() {	//check lengths
-							for (va, vb) in aa.iter().zip(ab) {	//iterate through both at once
-								match (va, vb) {
-									(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
-										dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-										let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-										q.push_back((va, vb, ndst.into()));	//add next layer vecs to queue
-									}
-									(_, _) => {	//plain value, compute and store result
-										dst.as_mut().push(f(va, vb, m)?);
-									}
-								}
-							}
+				for (va, vb) in {lenck2(a, b)?; PromotingIter::from(a).zip(PromotingIter::from(b))} {
+					match (va, vb) {
+						(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
+							dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
+							let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
+							q.push_back((va, vb, ndst.into()));	//add next layer vecs to queue
 						}
-						else {
-							return Err(Len2(aa.len(), ab.len()));
+						(_, _) => {	//plain value, compute and store result
+							dst.as_mut().push(f(va, vb, m)?);
 						}
-					}
-					(A(aa), vb) => {	//current entry is array + value
-						for va in aa {
-							match (va, vb) {
-								(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
-									dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-									let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-									q.push_back((va, vb, ndst.into()));	//add next layer vecs to queue
-								}
-								(_, _) => {	//plain value, compute and store result
-									dst.as_mut().push(f(va, vb, m)?);
-								}
-							}
-						}
-					}
-					(va, A(ab)) => {	//current entry is value + array
-						for vb in ab {
-							match (va, vb) {
-								(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
-									dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-									let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-									q.push_back((va, vb, ndst.into()));	//add next layer vecs to queue
-								}
-								(_, _) => {	//plain value, compute and store result
-									dst.as_mut().push(f(va, vb, m)?);
-								}
-							}
-						}
-					}
-					(_, _) => {	//current entry is two values
-						unreachable!();
 					}
 				}
 			}
@@ -176,141 +136,18 @@ pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<
 			let mut q: VecDeque<(&Value, &Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays
 			q.push_back((a, b, c, (&mut az).into()));
 			while let Some((a, b, c, mut dst)) = q.pop_front() {    //keep reading from front of queue
-				match (a, b, c) {
-					(A(aa), A(ab), A(ac)) => {	//current entry is three arrays
-						if aa.len() == ab.len() && ab.len() == ac.len() {	//check lengths
-							for ((va, vb), vc) in aa.iter().zip(ab).zip(ac) {
-								match (va, vb, vc) {
-									(A(_), A(_), A(_)) |
-									(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
-									(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
-										dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-										let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-										q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
-									}
-									(_, _, _) => {	//plain value, compute and store result
-										dst.as_mut().push(f(va, vb, vc, m)?);
-									}
-								}
-							}
+				for ((va, vb), vc) in {lenck3(a, b, c)?; PromotingIter::from(a).zip(PromotingIter::from(b)).zip(PromotingIter::from(c))} {
+					match (va, vb, vc) {
+						(A(_), A(_), A(_)) |
+						(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
+						(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
+							dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
+							let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
+							q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
 						}
-						else {
-							return Err(Len3(aa.len(), ab.len(), ac.len()));
+						(_, _, _) => {	//plain value, compute and store result
+							dst.as_mut().push(f(va, vb, vc, m)?);
 						}
-					}
-					(A(aa), A(ab), vc) => {	//current entry is array + array + value
-						if aa.len() == ab.len() {	//check lengths
-							for (va, vb) in aa.iter().zip(ab) {
-								match (va, vb, vc) {
-									(A(_), A(_), A(_)) |
-									(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
-									(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
-										dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-										let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-										q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
-									}
-									(_, _, _) => {	//plain value, compute and store result
-										dst.as_mut().push(f(va, vb, vc, m)?);
-									}
-								}
-							}
-						}
-						else {
-							return Err(Len2(aa.len(), ab.len()));
-						}
-					}
-					(A(aa), vb, A(ac)) => {	//current entry is array + value + array
-						if aa.len() == ac.len() {
-							for (va, vc) in aa.iter().zip(ac) {
-								match (va, vb, vc) {
-									(A(_), A(_), A(_)) |
-									(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
-									(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
-										dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-										let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-										q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
-									}
-									(_, _, _) => {	//plain value, compute and store result
-										dst.as_mut().push(f(va, vb, vc, m)?);
-									}
-								}
-							}
-						}
-						else {
-							return Err(Len2(aa.len(), ac.len()));
-						}
-					}
-					(va, A(ab), A(ac)) => {	//current entry is value + array + array
-						if ab.len() == ac.len() {
-							for (vb, vc) in ab.iter().zip(ac) {
-								match (va, vb, vc) {
-									(A(_), A(_), A(_)) |
-									(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
-									(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
-										dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-										let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-										q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
-									}
-									(_, _, _) => {	//plain value, compute and store result
-										dst.as_mut().push(f(va, vb, vc, m)?);
-									}
-								}
-							}
-						}
-						else {
-							return Err(Len2(ab.len(), ac.len()));
-						}
-					}
-					(A(aa), vb, vc) => {	//current entry is array + value + value
-						for va in aa {
-							match (va, vb, vc) {
-								(A(_), A(_), A(_)) |
-								(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
-								(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
-									dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-									let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-									q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
-								}
-								(_, _, _) => {	//plain value, compute and store result
-									dst.as_mut().push(f(va, vb, vc, m)?);
-								}
-							}
-						}
-					}
-					(va, A(ab), vc) => {	//current entry is value + array + value
-						for vb in ab {
-							match (va, vb, vc) {
-								(A(_), A(_), A(_)) |
-								(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
-								(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
-									dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-									let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-									q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
-								}
-								(_, _, _) => {	//plain value, compute and store result
-									dst.as_mut().push(f(va, vb, vc, m)?);
-								}
-							}
-						}
-					}
-					(va, vb, A(ac)) => {	//current entry is value + value + array
-						for vc in ac {
-							match (va, vb, vc) {
-								(A(_), A(_), A(_)) |
-								(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
-								(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
-									dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-									let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-									q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
-								}
-								(_, _, _) => {	//plain value, compute and store result
-									dst.as_mut().push(f(va, vb, vc, m)?);
-								}
-							}
-						}
-					}
-					(_, _, _) => {	//current entry is three values
-						std::hint::unreachable_unchecked()
 					}
 				}
 			}

@@ -1,9 +1,12 @@
 //! Storage structs and methods
 
+use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::sync::RwLock;
 use std::thread::JoinHandle;
 use std::mem::ManuallyDrop;
+use std::ops::Deref;
+use std::ptr::NonNull;
 use malachite::{Rational, Integer, Natural};
 use regex::{Regex, RegexBuilder};
 use bit_vec::BitVec;
@@ -14,6 +17,25 @@ pub enum Value {
 	N(Rational),
 	S(String),
 	A(Vec<Value>)
+}
+/// avoid stack overflow due to deeply nested arrays, dfs without recursive calls
+impl Drop for Value {
+	fn drop(&mut self) {
+		use Value::A;
+		use std::mem::take;
+		if let A(a) = self {
+			let mut q: Vec<Vec<Value>> = vec![take(a)];	//init queue for arrays to be processed
+			while let Some(mut a) = q.pop() {    //while there are arrays in the queue
+				for v in &mut a {	//traverse them
+					if let A(aa) = v {	//if a nested array is encountered
+						q.push(take(aa))	//remove it and add to queue
+					}
+				}
+				//current array drops here, with no nested contents
+			}
+		}
+		//plain values drop here
+	}
 }
 
 #[derive(Default)]
@@ -55,6 +77,7 @@ impl std::ops::IndexMut<&Integer> for RegStore {
 #[repr(transparent)] pub struct RegexCache(pub RwLock<HashMap<String, Regex>>);
 
 impl RegexCache {
+	/// get regex from cache or freshly compile
 	#[inline(always)] pub(crate) fn get(&self, s: &String) -> Result<Regex, String> {
 		if let Some(re) = self.0.read().unwrap().get(s) {
 			Ok(re.clone())
@@ -82,6 +105,7 @@ Advances the offset in-place to the beginning of the next character.
 # Safety
 Assumes that `s` is valid UTF-8 and `i` is in bounds, ***undefined behavior*** otherwise.
 */
+#[allow(clippy::precedence)]
 #[inline(always)] pub(crate) unsafe fn parse_utf8_unchecked(s: &str, i: &mut usize) -> char {
 	let b = unchecked_index::unchecked_index(s.as_bytes());	//zero-cost conversions
 	let c: u32;	//future char
@@ -180,7 +204,7 @@ impl Macro {
 	}
 }
 
-/// Stack for number IO parameter contexts (K,I,O), with checked accessors
+/// Stack for numeric IO parameter contexts (K,I,O), with checked accessors
 pub struct ParamStk(
 	pub Vec<(Integer, Natural, Natural)>
 );
@@ -240,8 +264,8 @@ impl Default for ParamStk {
 	}
 }
 
-pub struct State {
-	mstk: Vec<ManuallyDrop<Value>>,
+pub struct State<'a> {
+	mstk: Vec<Cow<'a, Value>>,
 	regs: RegStore,
 
 }
