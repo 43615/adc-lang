@@ -1,13 +1,10 @@
 //! Storage structs and methods
 
-use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
+use std::rc::Rc;
 use std::sync::RwLock;
 use std::thread::JoinHandle;
-use std::mem::ManuallyDrop;
-use std::ops::Deref;
-use std::ptr::NonNull;
-use malachite::{Rational, Integer, Natural};
+use malachite::{rational::Rational, Integer, Natural};
 use regex::{Regex, RegexBuilder};
 use bit_vec::BitVec;
 
@@ -40,17 +37,21 @@ impl Drop for Value {
 
 #[derive(Default)]
 pub struct Register {
-	v: Vec<Value>,
-	th: Option<JoinHandle<Vec<Value>>>
+	pub v: Vec<Value>,
+	pub th: Option<JoinHandle<Vec<Value>>>
 }
 static EMPTY_REG: Register = Register {
 	v: Vec::new(),
 	th: None
 };
 
+/// register storage with different indexing modes
 pub struct RegStore {
-	low: [Register; 128],
-	high: HashMap<Integer, Register>
+	/// this covers ASCII for frequently-accessed registers (commands like `sa`)
+	pub low: [Register; 128],
+	
+	/// arbitrary integer indices otherwise
+	pub high: HashMap<Integer, Register>
 }
 
 impl std::ops::Index<&Integer> for RegStore {
@@ -73,6 +74,7 @@ impl std::ops::IndexMut<&Integer> for RegStore {
 	}
 }
 
+/// globally shareable cache for compiled regex automata
 #[derive(Default)]
 #[repr(transparent)] pub struct RegexCache(pub RwLock<HashMap<String, Regex>>);
 
@@ -105,7 +107,7 @@ Advances the offset in-place to the beginning of the next character.
 # Safety
 Assumes that `s` is valid UTF-8 and `i` is in bounds, ***undefined behavior*** otherwise.
 */
-#[allow(clippy::precedence)]
+#[allow(clippy::precedence, unsafe_op_in_unsafe_fn)]
 #[inline(always)] pub(crate) unsafe fn parse_utf8_unchecked(s: &str, i: &mut usize) -> char {
 	let b = unchecked_index::unchecked_index(s.as_bytes());	//zero-cost conversions
 	let c: u32;	//future char
@@ -264,8 +266,12 @@ impl Default for ParamStk {
 	}
 }
 
-pub struct State<'a> {
-	mstk: Vec<Cow<'a, Value>>,
-	regs: RegStore,
+/// Main interpreter state storage
+pub struct State {
+	/// main stack, `Rc` to allow shallow copies
+	pub mstk: Vec<Rc<Value>>,
+	
+	/// registers
+	pub regs: RegStore,
 
 }

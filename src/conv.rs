@@ -1,10 +1,10 @@
 //! Nontrivial conversions and glue
 
-use malachite::{Rational, Integer, Natural};
-use malachite::num::arithmetic::traits::Abs;
-use malachite::num::conversion::traits::{RoundingFrom, RoundingInto};
-use malachite::rounding_modes::RoundingMode;
-use crate::conv::PromotingIter::{Arr, Val};
+use std::iter::FusedIterator;
+use malachite::{rational::Rational, Integer, Natural};
+use malachite::base::num::arithmetic::traits::Abs;
+use malachite::base::num::conversion::traits::{RoundingFrom, RoundingInto};
+use malachite::base::rounding_modes::RoundingMode;
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value;
 
@@ -58,8 +58,8 @@ pub(crate) enum PromotingIter<'a> {
 impl<'a> From<&'a Value> for PromotingIter<'a> {
 	#[inline(always)] fn from(value: &'a Value) -> Self {
 		match value {
-			Value::A(a) => Arr(a, 0),
-			_ => Val(value)
+			Value::A(a) => Self::Arr(a, 0),
+			_ => Self::Val(value)
 		}
 	}
 }
@@ -67,15 +67,16 @@ impl<'a> Iterator for PromotingIter<'a> {
 	type Item = &'a Value;
 	#[inline(always)] fn next(&mut self) -> Option<Self::Item> {
 		match self {
-			Arr(arr, pos) => {
+			Self::Arr(arr, pos) => {
 				let val = arr.get(*pos);
 				*pos += 1;
 				val
 			},
-			Val(v) => {Some(v)}
+			Self::Val(v) => {Some(v)}
 		}
 	}
 }
+impl FusedIterator for PromotingIter<'_> {}
 
 /// If both values are arrays, check if they have the same length
 #[inline(always)] pub(crate) fn lenck2(a: &Value, b: &Value) -> Result<(), FnErr> {

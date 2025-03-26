@@ -5,12 +5,11 @@
 #![allow(dead_code)]	//TODO: make not dead
 
 use std::collections::{VecDeque};
-use std::iter::repeat;
 use std::ptr::NonNull;
-use malachite::{Integer, Rational};
-use malachite::num::arithmetic::traits::{DivRem, Mod, ModInverse, ModPow, Pow, Reciprocal};
-use malachite::num::basic::traits::{NegativeOne, Zero};
-use malachite::num::conversion::traits::{RoundingFrom, RoundingInto};
+use malachite::{Integer, rational::Rational};
+use malachite::base::num::arithmetic::traits::{DivRem, Mod, ModInverse, ModPow, Pow, Reciprocal};
+use malachite::base::num::basic::traits::{NegativeOne, Zero};
+use malachite::base::num::conversion::traits::{RoundingFrom, RoundingInto};
 use regex::Regex;
 use crate::structs::Value::{self, *};
 use crate::errors::FnErr::{self, *};

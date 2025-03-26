@@ -1,7 +1,7 @@
 [package]
 name = "adc-lang"
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 repository = "https://github.com/43615/adc-lang"
 description = "Array-oriented reimagining of dc, a terse stack-based esolang"
 license = "Unlicense"
@@ -9,11 +9,11 @@ license = "Unlicense"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-malachite = "0.4.16"
-bit-vec = "0.8.0"
-unchecked-index = "0.2.2"
-regex = "1.11.1"
-lazy_static = "1.5.0"
+malachite = "=0.5.1"
+bit-vec = "=0.8.0"
+unchecked-index = "=0.2.2"
+regex = "=1.11.1"
+lazy_static = "=1.5.0"
 phf = "0.11.3"
 phf_macros = "0.11.3"
 
