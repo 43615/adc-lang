@@ -58,16 +58,6 @@ macro_rules! tri {
 	}
 }
 
-//TODO: remove
-mon!(ph1);
-
-//TODO: remove
-dya!(ph2);
-
-//TODO: remove
-tri!(ph3);
-
-
 /// execute monadic fn, pseudorecursion through nested arrays
 pub(crate) fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 	if let A(aa) = a { unsafe {	//iterate through array, bfs without recursion
@@ -80,7 +70,7 @@ pub(crate) fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 				if let A(nsrc) = val {	//array encountered, pseudorecursion needed
 					dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
 					let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-					q.push_back((nsrc, ndst.into()));	//add next layer vecs to queue
+					q.push_back((nsrc, ndst.into()));	//add nested source and destination arrays to queue
 				}
 				else {	//plain value, compute and store result
 					dst.as_mut().push(f(val, m)?);
@@ -100,7 +90,7 @@ pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnEr
 		(A(_), A(_)) | (A(_), _) | (_, A(_)) => { unsafe {	//iterate through array(s), bfs without recursion
 			//NonNull pointers are required because of aliasing rules, soundness is ensured manually
 			let mut az: Vec<Value> = Vec::new();	//resulting array
-			let mut q: VecDeque<(&Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays
+			let mut q: VecDeque<(&Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays, plain values in 0,1 get promoted later
 			q.push_back((a, b, (&mut az).into()));
 			while let Some((a, b, mut dst)) = q.pop_front() {	//keep reading from front of queue
 				for (va, vb) in {lenck2(a, b)?; PromotingIter::from(a).zip(PromotingIter::from(b))} {
@@ -108,7 +98,7 @@ pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnEr
 						(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
 							dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
 							let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-							q.push_back((va, vb, ndst.into()));	//add next layer vecs to queue
+							q.push_back((va, vb, ndst.into()));	//add nested source and destination arrays to queue
 						}
 						(_, _) => {	//plain value, compute and store result
 							dst.as_mut().push(f(va, vb, m)?);
@@ -132,7 +122,7 @@ pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<
 		(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => { unsafe {	//iterate through array(s), bfs without recursion
 			//NonNull pointers are required because of aliasing rules, soundness is ensured manually
 			let mut az: Vec<Value> = Vec::new();	//resulting array
-			let mut q: VecDeque<(&Value, &Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays
+			let mut q: VecDeque<(&Value, &Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays, plain values in 0,1,2 get promoted later
 			q.push_back((a, b, c, (&mut az).into()));
 			while let Some((a, b, c, mut dst)) = q.pop_front() {    //keep reading from front of queue
 				for ((va, vb), vc) in {lenck3(a, b, c)?; PromotingIter::from(a).zip(PromotingIter::from(b)).zip(PromotingIter::from(c))} {
@@ -142,7 +132,7 @@ pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<
 						(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
 							dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
 							let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
-							q.push_back((va, vb, vc, ndst.into()));	//add next layer vecs to queue
+							q.push_back((va, vb, vc, ndst.into()));	//add nested source and destination arrays to queue
 						}
 						(_, _, _) => {	//plain value, compute and store result
 							dst.as_mut().push(f(va, vb, vc, m)?);

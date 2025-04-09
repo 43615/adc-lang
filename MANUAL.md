@@ -1,17 +1,21 @@
+# HEAVILY WIP - NOWHERE NEAR A LANGUAGE SPEC YET
+
+---
+
 # Command line arguments
 
 Always make sure that arguments containing shell-reserved characters are escaped properly.
 
 ## Instructions
-- `-i|--inter <prompt>?` starts an interactive (REPL) session. A custom prompt may be optionally specified, the default is `> `.
+- `-i|--inter <prompt>?` starts an interactive (REPL) session. A custom prompt may be specified, the default is `> `.
   - If no mode is specified, this is implied.
-- `-x|--exec <macro>+` executes the argument directly as a sequence of ADC commands. Multiple macros can be given at once.
-- `-f|--file <path>+` executes the specified file as a script if it exists and is readable. Multiple filenames can be given at once.
+- `-x|--exec <macro>` executes the argument directly as a sequence of ADC commands. Multiple macros can be given at once.
+- `-f|--file <path>` executes the specified file as a script if it exists and is readable. Multiple filenames can be given at once.
   - If non-flag arguments are given without specifying a mode (like `$ adc somefile`), this is implied.
 - These can be chained together, which will execute them sequentially. `-i` has to be exited manually to continue the sequence.
 
 ## Modes
-- `-r|--rest`: Restricted mode, blocks all in-language commands that interact with the OS as a basic protection against untrusted input.
+- `-r|--restricted`: Restricted mode, blocks all in-language commands that interact with the OS as a basic protection against untrusted input.
 - `-d|--debug`: Debug mode, logs every executed command to stderr.
 - `-q|--quiet`: Quiet mode, suppresses all errors (disables stderr).
 
@@ -22,7 +26,7 @@ The whole interpreter state can be stored as a file. There are in-language comma
 - `-o|--open <path>` opens a saved state, combining `-s` and `-l`.
 
 ## Other
-- `-h|--help` explains the available arguments and links to language documentation.
+- `-h|--help` explains the available arguments (these) and links to language documentation.
 - `-v|--version` prints the interpreter version.
 
 
@@ -94,44 +98,18 @@ The ADC interpreter uses the highly performant [Malachite](https://www.malachite
 
 ## Input and output
 
-Numbers can be entered and printed in any base (radix) starting at 2. The format used for bases up to 36 is mostly conventional, with Latin letters (any case) extending the digits after 9.
+Numbers can be entered and printed in any base (radix) starting at 2. The format used for bases up to 36 is mostly conventional, with Latin letters (either case) extending the digits after 9. Bases are configured as [parameters](#parameters).
 
-*(The `i` and `o` commands change the input and output base, more on them under [Parameters](#parameters))*
-```
-> 135.79 P
-135.79
-> `3 P	# grave/backtick as negative sign since minus is a command
-`3
-> 17@6 P	# exponential notation with at sign
-17000000
-> `123.4567@`8 P	# all combined
-`0.000001234567
-> 2i 10001 p	# switch to base 2 input
-17
-> 1010i 5o p	# back to base 10 for input, print again in base 5
-32
-> 20o p 2/ P	# print in base 20, halve and print again
-h
-8.a
-> 10o 16i 'deadbeef P	# number input containing letters must be escaped
-3735928559
-> 1@4 P		# exponent is always applied to the current input base
-65536
-```
+Some unusual aspects:
+- Since `-` (minus/hyphen) is an arithmetic function, the character `` ` `` (grave/backtick) is used as the negative sign.
+- If a base higher than 10 is used, the whole number must be prefixed by `'` (apostrophe). This will make any letters be processed as part of the number, until the number ends. Example with input base 16: `'dead.beef` = 57005.7458343505859375
+- Exponential/scientific notation uses `@` (at sign) instead of the conventional e/E. Exponents are always written in decimal, and applied to the current input base. Negative exponents also use `` ` ``.
 
-For base 37 and above, a special `'enclosed'` format must be used. Numbers are represented by a series of digit values; the block can also contain an exponential part.
-```
-> 50i '2 3 5 7.11 13@1' P	# highest allowed digit is 49
-12887861.26
-> '-0.25' P		# minus can be used as negative sign since this is separate from commands
-`0.5
-> 37 P	# unescaped numbers are also accepted and interpreted as single digits
-37
-> '1.25@'2 p	# this leniency can be taken this far
-`0.0006
-> '1 0'o P  # print again in base 50
-'-0.0 1 25'
-```
+For reference, here's the full syntax as a regex: `` ((`?\d+(\.\d+)?)|('`?[0-9a-zA-Z]+(\.[0-9a-zA-Z]+)?))(@`?\d+)? ``
+
+For bases above 36, a special `'enclosed'` format must be used. Numbers are represented by a series of digit values in decimal separated by spaces. Fractionals, negatives and exponents work identically. Example with input base 100: ``'`12 3.45 0 67@`8'`` = -1203.450067 * 100^-8
+
+Regex for this one as well: `` '`?\d+( \d+)*(\.\d+( \d+)*)?(@`?\d+)?' ``
 
 ## Arithmetic
 - `Na Nb + -> Nz` adds two numbers.

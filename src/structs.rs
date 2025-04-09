@@ -1,5 +1,7 @@
 //! Storage structs and methods
 
+#![allow(dead_code)] // TODO: make not dead
+
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::RwLock;
@@ -7,18 +9,24 @@ use std::thread::JoinHandle;
 use malachite::{rational::Rational, Integer, Natural};
 use regex::{Regex, RegexBuilder};
 use bit_vec::BitVec;
+use crate::fns;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Value {
 	B(BitVec),
 	N(Rational),
 	S(String),
 	A(Vec<Value>)
 }
-/// avoid stack overflow due to deeply nested arrays, dfs without recursive calls
+impl Default for Value {
+	#[inline(always)] fn default() -> Self {
+		Self::A(Vec::new())
+	}
+}
+/// avoid stack overflow due to deeply nested arrays, dfs with heap pseudorecursion
 impl Drop for Value {
 	fn drop(&mut self) {
-		use Value::A;
+		use Value::*;
 		use std::mem::take;
 		if let A(a) = self {
 			let mut q: Vec<Vec<Value>> = vec![take(a)];	//init queue for arrays to be processed
@@ -34,16 +42,25 @@ impl Drop for Value {
 		//plain values drop here
 	}
 }
+/// avoid stack overflow due to deeply nested arrays, using existing traversal function
+impl Clone for Value {
+	#[inline(always)] fn clone(&self) -> Self {
+		use Value::*;
+		match self {
+			A(_) => fns::exec1(|v, _| Ok(v.clone()), self, false).unwrap(),	//traverse array using heap recursion, perform cloning identity for every value
+			//base cases
+			B(b) => B(b.clone()),
+			N(n) => N(n.clone()),
+			S(s) => S(s.clone()),
+		}
+	}
+}
 
 #[derive(Default)]
 pub struct Register {
-	pub v: Vec<Value>,
+	pub v: Vec<Rc<Value>>,
 	pub th: Option<JoinHandle<Vec<Value>>>
 }
-static EMPTY_REG: Register = Register {
-	v: Vec::new(),
-	th: None
-};
 
 /// register storage with different indexing modes
 pub struct RegStore {
@@ -53,24 +70,32 @@ pub struct RegStore {
 	/// arbitrary integer indices otherwise
 	pub high: HashMap<Integer, Register>
 }
-
-impl std::ops::Index<&Integer> for RegStore {
-	type Output = Register;
-
-	fn index(&self, index: &Integer) -> &Self::Output {
-		usize::try_from(index).ok().and_then(|i| self.low.get(i)).unwrap_or_else(|| {
-			self.high.get(index).unwrap_or(&EMPTY_REG)
-		})
+impl RegStore {
+	/// get register reference, don't create a register if not present
+	fn try_get(&self, index: &Integer) -> Option<&Register> {
+		usize::try_from(index).ok()
+			.and_then(|i| self.low.get(i))
+			.or_else(|| self.high.get(index))
+	}
+	
+	/// get mutable register reference, create register if necessary
+	fn get_mut(&mut self, index: &Integer) -> &mut Register {
+		usize::try_from(index).ok()
+			.and_then(|i| self.low.get_mut(i))
+			.unwrap_or_else(|| {
+				if !self.high.contains_key(index) {
+					self.high.insert(index.clone(), Register::default());
+				}
+				self.high.get_mut(index).unwrap()
+			})
 	}
 }
-impl std::ops::IndexMut<&Integer> for RegStore {
-	fn index_mut(&mut self, index: &Integer) -> &mut Self::Output {
-		usize::try_from(index).ok().and_then(|i| self.low.get_mut(i)).unwrap_or_else(|| {
-			if !self.high.contains_key(index) {
-				self.high.insert(index.clone(), Register::default());
-			}
-			self.high.get_mut(index).unwrap()
-		})
+impl Default for RegStore {
+	fn default() -> Self {
+		Self {
+			low: std::array::from_fn(|_| Register::default()),
+			high: HashMap::default()
+		}
 	}
 }
 

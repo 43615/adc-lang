@@ -24,9 +24,3 @@ macro_rules! cmdr {
 		}
 	}
 }
-
-///TODO: remove
-cmd!(phc,_s, Ok(()));
-
-///TODO: remove
-cmdr!(phr,_s,_ri, Ok(()));
