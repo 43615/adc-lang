@@ -1,42 +1,142 @@
 //! Core parsing and primary API
 
 pub mod structs;
+use structs::*;
 
-pub mod fns;
+pub(crate) mod fns;
+use fns::*;
 
-pub mod cmds;
+pub(crate) mod cmds;
+use cmds::*;
 
-pub mod errors;
+pub(crate) mod errors;
+use errors::*;
 
-pub mod conv;
+pub(crate) mod conv;
+use conv::*;
 
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::io::{BufRead, Write};
 use lazy_static::lazy_static;
-use phf_macros::phf_map;
 
-lazy_static! {
-	pub(crate) static ref RE_CACHE: structs::RegexCache = structs::RegexCache::default();
+/// Added at the start of saved state files
+pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
+
+/// Specifies the line editor to use, with a default config
+type InnerEditor = rustyline::Editor<(), rustyline::history::MemHistory>;
+struct LineEditor(InnerEditor);
+impl Default for LineEditor {
+	fn default() -> Self {
+		let conf = rustyline::Config::builder()
+			.auto_add_history(true)
+			.max_history_size(usize::MAX).unwrap()
+			.build();
+
+		Self(
+			InnerEditor::with_history(
+			conf.clone(),
+			rustyline::history::MemHistory::with_config(&conf)
+			).unwrap()
+		)
+	}
 }
 
-/// Debug flag (set by `-d` option in this crate's CLI binary wrapper). Information about executed commands will be printed to stderr.
-pub static DEBUG: OnceLock<()> = OnceLock::new();
+/// Generic input stream adapter trait
+///
+/// Has a generic implementation for all [`BufRead`] types, `prompt` does nothing in that case.
+pub trait ReadLine {
+	/// Display `prompt` if possible and read one line of input. The definition of "line" is not strict.
+	/// 
+	/// This is typically called once by every execution of the `?` command within ADC.
+	fn read_line(&mut self, prompt: &str) -> std::io::Result<String>;
+}
+impl<T: BufRead> ReadLine for T {
+	fn read_line(&mut self, _prompt: &str) -> std::io::Result<String> {
+		let mut buf = String::new();
+		self.read_line(&mut buf)?;
+		Ok(buf)
+	}
+}
+impl ReadLine for LineEditor {
+	fn read_line(&mut self, prompt: &str) -> std::io::Result<String> {
+		match self.0.readline(prompt) {
+			Ok(s) => {
+				Ok(s)
+			}
+			Err(re) => {
+				use rustyline::error::ReadlineError::*;
+				match re {
+					Io(e) => Err(e),
+					Eof => Err(std::io::Error::other("EOF")),
+					Interrupted => Err(std::io::Error::other("Interrupted")),
+					Errno(e) => Err(std::io::Error::other(e)),
+					Signal(_) => Err(std::io::Error::other("Interrupted")),
+					_ => Err(std::io::Error::other("Unknown input error"))
+				}
+			}
+		}
+	}
+}
 
-enum CmdType {
+/// Bundle of standard IO streams, generic interface to support custom IO wrappers
+pub struct IOStreams (
+	/// Input
+	pub Box<dyn ReadLine>,
+	/// Output
+	pub Box<dyn Write>,
+	/// Error
+	pub Box<dyn Write>
+);
+impl IOStreams {
+	/// Use dummy IO streams, these do nothing
+	pub fn empty() -> Self {
+		Self (
+			Box::new(std::io::empty()),
+			Box::new(std::io::empty()),
+			Box::new(std::io::empty())
+		)
+	}
+
+	/// Use IO streams of the process (stdin, stdout, stderr)
+	pub fn process() -> Self {
+		Self (
+			Box::new(LineEditor::default()),
+			Box::new(std::io::stdout()),
+			Box::new(std::io::stderr())
+		)
+	}
+}
+
+/// How much information to output on stderr
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LogLevel {
+	/// Only output error messages
+	Normal,
+	/// Report every command (without values) 
+	Debug,
+	/// No error messages, stderr disabled
+	Quiet
+}
+
+lazy_static! {
+	pub(crate) static ref RE_CACHE: RegexCache = RegexCache::default();
+}
+
+enum Command {
 	///monadic pure function
-	Fn1(fns::Mon),
+	Fn1(Mon),
 
 	///dyadic pure function
-	Fn2(fns::Dya),
+	Fn2(Dya),
 	
 	///triadic pure function
-	Fn3(fns::Tri),
+	Fn3(Tri),
 
 	///impure command
-	Cmd(cmds::Cmd),
+	Cmd(Cmd),
 
 	///impure command with register access
-	CmdR(cmds::CmdR),
+	CmdR(CmdR),
 
 	///`exec`-specific (macros, IO, OS...)
 	Special,
@@ -50,54 +150,65 @@ enum CmdType {
 	///invalid command
 	Wrong,
 }
-impl Default for CmdType {
-	#[inline(always)] fn default() -> Self {
+impl Default for Command {
+	fn default() -> Self {
 		Self::Wrong
 	}
 }
 
-static CMDS: phf::Map<char, CmdType> = {
-	use CmdType::*;
+static CMDS: phf::Map<u8, Command> = {
+	use Command::*;
 	use fns::*;
 	use cmds::*;
-	phf_map! {
-		'\0' => Space,
-		'\t' => Space,
-		'\n' => Space,
-		'\r' => Space,
-		' ' => Space,
+	phf::phf_map! {
+		b'\0' | b'\t' | b'\n' | b'\r' | b' ' => Space,
 		
-		'\'' => Lit,
-		'(' => Lit,
-		'0' => Lit,
-		'1' => Lit,
-		'2' => Lit,
-		'3' => Lit,
-		'4' => Lit,
-		'5' => Lit,
-		'6' => Lit,
-		'7' => Lit,
-		'8' => Lit,
-		'9' => Lit,
-		'@' => Lit,
-		'F' => Lit,
-		'T' => Lit,
-		'[' => Lit,
+		b'\'' | b'(' | b')' | b'0' | b'1' | b'2' | b'3' | b'4' | b'5' | b'6' | b'7' | b'8' | b'9' | b'@' | b'F' | b'T' | b'[' => Lit,
 		
-		'!' => Fn1(inv),
-		'g' => Fn1(log),
+		b'!' => Fn1(neg),
+		b'g' => Fn1(log),
 		
-		'%' => Fn2(r#mod),
-		'*' => Fn2(mul),
-		'+' => Fn2(add),
-		'-' => Fn2(sub),
-		'/' => Fn2(div),
-		'G' => Fn2(logb),
-		'^' => Fn2(pow),
-		'~' => Fn2(euc),
+		b'%' => Fn2(r#mod),
+		b'*' => Fn2(mul),
+		b'+' => Fn2(add),
+		b'-' => Fn2(sub),
+		b'/' => Fn2(div),
+		b'G' => Fn2(logb),
+		b'^' => Fn2(pow),
+		b'~' => Fn2(euc),
 		
-		'|' => Fn3(bar),
+		b'|' => Fn3(bar),
 		
 		
 	}
 };
+
+/// Results of running [`exec`], wrappers should handle these differently
+#[must_use]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecResult {
+	/// Commands ran to completion, request further input
+	Finished,
+
+	/// Exit of current instance requested (q), end context
+	SoftQuit(u8),
+
+	/// Complete exit requested (`q), terminate
+	HardQuit(u8)
+}
+
+/// Interpreter entry point, executes ADC commands to modify state
+///
+/// # Arguments
+/// - `st`: State struct to work on, modified in-place
+/// - `start`: Initial commands to run
+/// - `io`: Bundle of IO stream handles
+///   - `io.0`: Input, read by ? one line at a time
+///   - `io.1`: Output, written to by printing commands
+///   - `io.2`: Error messages, one per line
+/// - `ll`: Level of verbosity for `io.2`
+/// - `strict`: Restricted mode switch, prevents OS access (for untrusted input). If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
+#[cold] #[inline(never)] pub fn exec(st: &mut State, start: Utf8Iter, io: &mut IOStreams, mut ll: LogLevel, mut strict: bool) -> ExecResult {
+	use ExecResult::*;
+	Finished
+}

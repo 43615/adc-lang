@@ -4,7 +4,7 @@ use malachite::Integer;
 use crate::structs::Value;
 
 #[derive(Debug)]
-pub enum FnErr {
+pub(crate) enum FnErr {
 	Type1(TypeLabel),
 	Type2(TypeLabel, TypeLabel),
 	Type3(TypeLabel, TypeLabel, TypeLabel),
