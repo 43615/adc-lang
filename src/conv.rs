@@ -2,10 +2,10 @@
 
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value;
+use malachite::{Rational, Integer, Natural};
 use malachite::base::num::arithmetic::traits::Abs;
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode;
-use malachite::{rational::Rational, Integer, Natural};
 use std::iter::FusedIterator;
 
 pub(crate) fn r_i1(ra: &Rational) -> Integer {

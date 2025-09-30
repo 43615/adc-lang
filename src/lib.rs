@@ -15,16 +15,20 @@ use errors::*;
 pub(crate) mod conv;
 use conv::*;
 
+pub(crate) mod num;
+use num::*;
+
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use lazy_static::lazy_static;
+use malachite::Rational;
 
 /// Added at the start of saved state files
 pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
 
 /// Specifies the line editor to use, with a default config
 type InnerEditor = rustyline::Editor<(), rustyline::history::MemHistory>;
-struct LineEditor(InnerEditor);
+#[repr(transparent)] struct LineEditor(InnerEditor);
 impl Default for LineEditor {
 	fn default() -> Self {
 		let conf = rustyline::Config::builder()
@@ -41,7 +45,7 @@ impl Default for LineEditor {
 	}
 }
 
-/// Generic input stream adapter trait
+/// Generic input stream adapter trait, used for adding a proper line editor.
 ///
 /// Has a generic implementation for all [`BufRead`] types, `prompt` does nothing in that case.
 pub trait ReadLine {
@@ -59,22 +63,18 @@ impl<T: BufRead> ReadLine for T {
 }
 impl ReadLine for LineEditor {
 	fn read_line(&mut self, prompt: &str) -> std::io::Result<String> {
-		match self.0.readline(prompt) {
-			Ok(s) => {
-				Ok(s)
+		self.0.readline(prompt).map_err(|re| {
+			use rustyline::error::ReadlineError::*;
+			use std::io::Error;
+			match re {
+				Io(e) => e,
+				Eof => Error::other("EOF"),
+				Interrupted => Error::other("Interrupted"),
+				Errno(e) => Error::other(e),
+				Signal(_) => Error::other("Interrupted"),
+				_ => Error::other("Unknown input error")
 			}
-			Err(re) => {
-				use rustyline::error::ReadlineError::*;
-				match re {
-					Io(e) => Err(e),
-					Eof => Err(std::io::Error::other("EOF")),
-					Interrupted => Err(std::io::Error::other("Interrupted")),
-					Errno(e) => Err(std::io::Error::other(e)),
-					Signal(_) => Err(std::io::Error::other("Interrupted")),
-					_ => Err(std::io::Error::other("Unknown input error"))
-				}
-			}
-		}
+		})
 	}
 }
 
@@ -210,5 +210,21 @@ pub enum ExecResult {
 /// - `strict`: Restricted mode switch, prevents OS access (for untrusted input). If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 #[cold] #[inline(never)] pub fn exec(st: &mut State, start: Utf8Iter, io: &mut IOStreams, mut ll: LogLevel, mut strict: bool) -> ExecResult {
 	use ExecResult::*;
+	use malachite::{Rational, Natural};
+	let rats = 
+	[
+		Rational::const_from_signeds(1,8),
+	];
+	let k = 0;
+	let o = Natural::const_from(10);
+	
+	for rat in rats {
+		let (neg, iparts, fparts, rparts) = digits(&rat, k, &o);
+		println!("{}", nnorm(neg, &iparts, &fparts, &rparts, &o));
+		println!("{}", nsci(neg, &iparts, &fparts, &rparts, &o));
+		println!("{}", nfrac(&rat, 0, &o));
+		println!("{}\n\n", nauto(&rat, k, &o));
+	}
+	
 	Finished
 }

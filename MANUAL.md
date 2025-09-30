@@ -121,14 +121,14 @@ Number output is controlled by the [parameters](#parameters) K and O. Additional
 - Scientific: `1.234567@5`
 - Fraction: `1234567 10 /`
 
-These are equally correct ways of expressing a number, as inputting them back would give the same value. By default, outputting a number generates all 3 formats and picks the shortest one, but one of these may be forced using an additional parameter.
+These are equally correct ways of expressing a number, as inputting them back would give the same value. By default, outputting a number generates all 3 formats and picks the shortest one (preference order as listed), but one of these may be forced using an additional parameter.
 
 
 ## Parameters
 
 These are options for controlling number I/O operations:
-- `NNa k` sets the output precision. This limits the amount of displayed significant digits, with 0 meaning unlimited.
-  - Normal: Counts all significant digits until K is reached. Integer digits that don't fit are replaced with 0s, fractional digits are discarded, recurring digits are not displayed as such unless the whole recurring portion can fit. Uses standard rounding, halves go up.
+- `NPa k` sets the output precision. This limits the amount of displayed significant digits, with 0 meaning unlimited.
+  - Normal: Counts all significant digits until K is reached. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are not displayed as such unless the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
   - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater.
 - `K -> NNz` returns the current output precision.

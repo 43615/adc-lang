@@ -7,9 +7,10 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 use std::sync::RwLock;
 use std::thread::JoinHandle;
-use malachite::{rational::Rational, Integer, Natural};
+use malachite::{Rational, Integer, Natural};
 use regex::{Regex, RegexBuilder};
 use bitvec::prelude::*;
+use crate::num::nauto;
 
 #[derive(Debug)]
 pub enum Value {
@@ -23,7 +24,8 @@ impl Default for Value {
 		Self::A(Vec::new())
 	}
 }
-/// Necessary custom implementation to avoid stack overflow due to deeply nested arrays
+
+/// Non-recursive heap algorithm to avoid overflowing the stack, DFS traversal
 impl Drop for Value {
 	fn drop(&mut self) {
 		use Value::*;
@@ -43,18 +45,54 @@ impl Drop for Value {
 	}
 }
 
-/// Necessary custom implementation to avoid stack overflow due to deeply nested arrays
+/// Non-recursive heap algorithm to avoid overflowing the stack, BFS using existing traversal function
 impl Clone for Value {
 	#[inline(always)] fn clone(&self) -> Self {
 		use Value::*;
 		match self {
 			//traverse array using heap pseudorecursion, perform (cloning) identity function on every value
-			//`exec1` takes over instead of continuing call recursion, `v.clone()` never gets called for arrays
+			//`exec1` takes over instead of continuing call recursion, `v.clone()` never gets called for `A`
 			A(_) => crate::fns::exec1(|v, _| Ok(v.clone()), self, false).unwrap(),
 			//scalar base cases
 			B(b) => B(b.clone()),
 			N(n) => N(n.clone()),
 			S(s) => S(s.clone()),
+		}
+	}
+}
+
+impl Value {
+	/// Prints scalar values, `N` uses the same parameters as [`ParamStk::create`]. Passing `A` is undefined behavior.
+	pub(crate) fn display_scalar(&self) -> String {
+		use Value::*;
+		match self {
+			B(b) => {
+				b.iter().by_vals().map(|b| if b {'T'} else {'F'}).collect()
+			},
+			N(n) => {
+				nauto(n, 0, &Natural::const_from(10))
+			},
+			S(s) => {
+				String::from("[") + s + "]"
+			},
+			A(_) => {
+				unsafe { std::hint::unreachable_unchecked() }
+			}
+		}
+	}
+}
+
+/// Non-recursive heap algorithm to avoid overflowing the stack, DFS with flattening of arrays. `N` uses the same parameters as [`ParamStk::create`].
+impl Display for Value {
+	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+		use Value::*;
+		match self {
+			A(a) => {
+				todo!()
+			},
+			_ => {
+				write!(f, "{}", self.display_scalar())
+			}
 		}
 	}
 }
@@ -312,11 +350,11 @@ impl Utf8Iter<'_> {
 
 /// Stack for numeric IO parameter contexts (K,I,O), with checked accessors
 #[derive(Clone, Debug)]
-#[repr(transparent)] pub struct ParamStk(Vec<(Natural, Natural, Natural, NumOutMode)>);
+#[repr(transparent)] pub struct ParamStk(Vec<(usize, Natural, Natural, NumOutMode)>);
 impl ParamStk {
-	/// Create new context with defaults 0,10,10
+	/// Create new context with defaults 0,10,10,auto
 	#[inline(always)] pub fn create(&mut self) {
-		self.0.push((0u8.into(), 10u8.into(), 10u8.into(), NumOutMode::Auto))
+		self.0.push((0, Natural::const_from(10), Natural::const_from(10), NumOutMode::Auto))
 	}
 
 	/// Return to previous context, create default if at bottom
@@ -331,12 +369,12 @@ impl ParamStk {
 	}
 
 	/// Checked edit of current output precision
-	#[inline(always)] pub fn set_k(&mut self, r: &Rational) -> Result<(), &'static str> {
-		if let Ok(n) = r.try_into() {
-			self.0.last_mut().unwrap().0 = n;
+	#[inline(always)] pub fn set_k(&mut self, r: &Rational) -> Result<(), String> {
+		if let Ok(u) = r.try_into() {
+			self.0.last_mut().unwrap().0 = u;
 			Ok(())
 		}
-		else {Err("Output precision must be a natural number")}
+		else {Err(format!("Output precision must be a natural number <={}", usize::MAX))}
 	}
 
 	/// Checked edit of current input base
@@ -361,7 +399,7 @@ impl ParamStk {
 	#[inline(always)] pub fn set_mode(&mut self, m: NumOutMode) {self.0.last_mut().unwrap().3 = m;}
 
 	/// Current output precision
-	#[inline(always)] pub fn k(&self) -> &Natural {&self.0.last().unwrap().0}
+	#[inline(always)] pub fn k(&self) -> usize {self.0.last().unwrap().0}
 
 	/// Current input base
 	#[inline(always)] pub fn i(&self) -> &Natural {&self.0.last().unwrap().1}

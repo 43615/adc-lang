@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]	//TODO: make not dead
 
-use malachite::rational::Rational;
+use malachite::Rational;
 use crate::structs::{State};
 
 ///Impure command

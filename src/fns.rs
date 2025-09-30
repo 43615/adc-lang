@@ -8,7 +8,7 @@
 
 use std::collections::{VecDeque};
 use std::ptr::NonNull;
-use malachite::{Integer, rational::Rational};
+use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{DivRem, Mod, ModInverse, ModPow, Reciprocal};
 use malachite::base::num::basic::traits::{NegativeOne, Zero};
 use crate::structs::Value::{self, *};

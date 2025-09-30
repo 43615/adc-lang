@@ -9,7 +9,7 @@ license = "Unlicense"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-malachite = { version = "=0.6.1", features = ["32_bit_limbs", "random"] }
+malachite = { version = "=0.7.0", features = ["32_bit_limbs", "random"] }
 bitvec = "=1.0.1"
 unchecked-index = "=0.2.2"
 regex = "=1.11.3"

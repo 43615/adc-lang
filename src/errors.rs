@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::fmt::{Display, Formatter};
 use malachite::Integer;
 use crate::structs::Value;
@@ -28,7 +27,7 @@ impl Display for FnErr {
 		}
 	}
 }
-impl Error for FnErr {}
+impl std::error::Error for FnErr {}
 
 #[derive(Debug)]
 pub(crate) enum TypeLabel {
