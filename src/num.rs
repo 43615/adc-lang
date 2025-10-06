@@ -1,16 +1,15 @@
 //! Number I/O functions
 
-use malachite::base::num::arithmetic::traits::{DivRound, Parity, Pow, Reciprocal, Sign};
+use malachite::base::num::arithmetic::traits::{Parity, Pow, Reciprocal, Sign};
 use malachite::base::num::basic::traits::{One, Two, Zero};
-use malachite::base::num::conversion::traits::{Digits, ExactFrom};
-use malachite::base::rounding_modes::RoundingMode;
+use malachite::base::num::conversion::traits::{Digits, WrappingFrom};
 use malachite::rational::arithmetic::traits::Approximate;
 use malachite::{Natural, Rational};
-use std::cmp::Ordering;
+use std::cmp::Ordering::*;
 
 ///negative, integer, fractional, recurring
 pub(crate) fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
-	let sign = r.sign() == Ordering::Less;
+	let sign = r.sign() == Less;
 	let (mut ipart, temp) = r.to_digits(o);
 	ipart.reverse();	//malachite puts them in reverse order
 	let (mut fpart, mut rpart) = temp.into_vecs();
@@ -22,13 +21,14 @@ pub(crate) fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>
 		rpart.truncate(1 + k - (ipart.len()+fpart.len()));
 		let next = fpart.pop().unwrap();	//first discarded digit
 		fpart.append(&mut rpart);
-		if next >= (o.div_round(Natural::TWO, RoundingMode::Up).0) {	//round remaining digits if next >= ceil(o/2)
-			let mut last = true;
+		let ord = (next * Natural::TWO).cmp(o);
+		if ord != Less {	//round remaining digits if next >= ceil(o/2)
+			let mut to_even = ord == Equal;	//round last digit to even if next == o/2
 			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
-				if !last || d.odd() {	//go to even on the last digit
+				if !to_even || d.odd() {	//only increment last digit if it's odd
 					*d += Natural::ONE;	//reused for carrying up after a continue
 				}
-				last = false;
+				to_even = false;
 				if d == o {	//roll over
 					*d = Natural::ZERO;
 					continue;
@@ -37,8 +37,11 @@ pub(crate) fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>
 					break;
 				}
 			}
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1)
+				ipart.insert(0, Natural::ONE);	//add leading 1
+			}
 		}
-		while let Some(d) = fpart.last() && *d == Natural::ZERO {	//remove trailing zeros
+		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
 			fpart.pop();
 		}
 	}
@@ -46,13 +49,14 @@ pub(crate) fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>
 		rpart.clear();
 		fpart.truncate(1 + k - ipart.len());
 		let next = fpart.pop().unwrap();	//first discarded digit
-		if next >= (o.div_round(Natural::TWO, RoundingMode::Up).0) {	//round remaining digits if next >= ceil(o/2)
-			let mut last = true;
+		let ord = (next * Natural::TWO).cmp(o);
+		if ord != Less {	//round remaining digits if next >= ceil(o/2)
+			let mut to_even = ord == Equal;	//round last digit to even if next == o/2
 			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
-				if !last || d.odd() {	//go to even on the last digit
+				if !to_even || d.odd() {	//only increment last digit if it's odd
 					*d += Natural::ONE;	//reused for carrying up after a continue
 				}
-				last = false;
+				to_even = false;
 				if d == o {	//roll over
 					*d = Natural::ZERO;
 					continue;
@@ -61,24 +65,28 @@ pub(crate) fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>
 					break;
 				}
 			}
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1)
+				ipart.insert(0, Natural::ONE);	//add leading 1
+			}
 		}
-		while let Some(d) = fpart.last() && *d == Natural::ZERO {	//remove trailing zeros
+		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
 			fpart.pop();
 		}
 	}
 	else {	//not all integer digits fit
 		rpart.clear();
 		fpart.clear();
-		let len = ipart.len();
+		let mut len = ipart.len();
 		ipart.truncate(1 + k);
 		let next = ipart.pop().unwrap();	//first discarded digit
-		if next >= (o.div_round(Natural::TWO, RoundingMode::Up).0) {	//round remaining digits if next >= ceil(o/2)
-			let mut last = true;
+		let ord = (next * Natural::TWO).cmp(o);
+		if ord != Less {	//round remaining digits if next >= ceil(o/2)
+			let mut to_even = ord == Equal;	//round last digit to even if next == o/2
 			for d in ipart.iter_mut().rev() {	//carry addition all the way up
-				if !last || d.odd() {	//go to even on the last digit
+				if !to_even || d.odd() {	//only increment last digit if it's odd
 					*d += Natural::ONE;	//reused for carrying up after a continue
 				}
-				last = false;
+				to_even = false;
 				if d == o {	//roll over
 					*d = Natural::ZERO;
 					continue;
@@ -87,23 +95,27 @@ pub(crate) fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>
 					break;
 				}
 			}
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1)
+				ipart.insert(0, Natural::ONE);	//add leading 1
+				len += 1;	//adjust target length
+			}
 		}
-		ipart.resize(len, Natural::ZERO);	//fill with trailing zeros
+		ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
 	}
 
 	(sign, ipart, fpart, rpart)
 }
 
-///digit to character byte
+///digit to character byte: 0-9a-z
 fn chr(d: &Natural) -> u8 {
-	let u = u8::exact_from(d);
+	let u = u8::wrapping_from(d);
 	if u < 10 { u + 48 } else { u + 87 }
 }
 
 ///normal notation from digits
 pub(crate) fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], o: &Natural) -> String {
 	let mut res = Vec::new();
-	if o > &Natural::const_from(36) {	//enclosed any-base format
+	if *o > Natural::const_from(36) {	//enclosed any-base format
 		res.push(b'\'');	//prefix for any-base
 
 		if neg {
@@ -146,7 +158,7 @@ pub(crate) fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Na
 		*res.last_mut().unwrap() = b'\'';	//suffix for any-base
 	}
 	else {	//low base
-		if o > &Natural::const_from(10) {
+		if *o > Natural::const_from(10) {
 			res.push(b'\'');	//prefix for bases 11-36
 		}
 
@@ -186,10 +198,10 @@ pub(crate) fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Na
 ///scientific notation from digits
 pub(crate) fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], o: &Natural) -> String {
 	if ipart.is_empty() {	//negative exponent
-		if let Some(pos) = fpart.iter().position(|n| n != &Natural::ZERO) {    //find first nonzero fractional digit
+		if let Some(pos) = fpart.iter().position(|n| *n != Natural::ZERO) {    //find first nonzero fractional digit
 			let (inew, fnew) = fpart.split_at(pos).1.split_at(1);
 			let mut res = nnorm(neg, inew, fnew, rpart, o);
-			if o > &Natural::const_from(36) {
+			if *o > Natural::const_from(36) {
 				res.pop();
 				res += &format!("@`{}'", pos+1);
 			}
@@ -201,7 +213,7 @@ pub(crate) fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Nat
 		else {	//no nonzero fractional digits, only recurring
 			let exp = fpart.len();
 			let mut res = nnorm(neg, ipart, &[], rpart, o);
-			if o > &Natural::const_from(36) {
+			if *o > Natural::const_from(36) {
 				res.pop();
 				res += &format!("@`{exp}'");
 			}
@@ -213,9 +225,13 @@ pub(crate) fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Nat
 	}
 	else {	//positive exponent
 		let (inew, fpre) = ipart.split_at(1);	//keep first integer digit
-		let exp = fpre.len();	//amount of now fractional digits
-		let mut res = nnorm(neg, inew, &[fpre, fpart].concat(), rpart, o);
-		if o > &Natural::const_from(36) {
+		let exp = fpre.len();	//amount of moved digits
+		let mut fnew = [fpre, fpart].concat();
+		while let Some(&Natural::ZERO) = fnew.last() {	//remove trailing zeros (possibly added from ipart if fpart is empty)
+			fnew.pop();
+		}
+		let mut res = nnorm(neg, inew, &fnew, rpart, o);
+		if *o > Natural::const_from(36) {
 			res.pop();
 			res += &format!("@{exp}'");
 		}
@@ -242,10 +258,10 @@ pub(crate) fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 
 	let mut res = Vec::new();
 
-	let mut sign = r.sign() == Ordering::Less;
+	let mut sign = r.sign() == Less;
 
 	for n in [numer, denom] {
-		if o > &Natural::const_from(10) {
+		if *o > Natural::const_from(10) {
 			res.push(b'\'');	//high base prefix
 		}
 
@@ -259,7 +275,7 @@ pub(crate) fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 			digits.push(Natural::ZERO);
 		}
 
-		if o > &Natural::const_from(36) {	//any-base
+		if *o > Natural::const_from(36) {	//any-base
 			for d in digits {
 				res.extend_from_slice(d.to_string().as_bytes());	//add digit values
 				res.push(b' ');
@@ -275,7 +291,7 @@ pub(crate) fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 		res.push(b' ');
 	}
 
-	res.push(b'/');
+	*res.last_mut().unwrap() = b'/';
 
 	unsafe { String::from_utf8_unchecked(res) }	//only ASCII
 }

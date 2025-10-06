@@ -14,29 +14,30 @@ Full documentation and source code: https://github.com/43615/adc-lang
 
 COMMAND LINE ARGUMENTS
 ----------------------
+Long and short flags are interchangeable. Short flags may not be concatenated: `-ie` is read as `-i e`, not `-i -e`.
 
 	INSTRUCTIONS
 	------------
 	`-i|--inter <prompt>?` starts an interactive (REPL) session. May use a custom prompt, the default is `> `.
 		This is the default if no instructions are given.
 	`-e|--exec <macro>*` executes the argument(s) directly as a sequence of ADC commands.
-		Ensure that characters used in your shell's syntax are ignored/escaped properly.
+		Ensure that characters with special uses in your shell's syntax are ignored/escaped properly.
 	`-f|--file <path>*` executes the specified file(s) as a script, without creating or modifying it.
 		If non-flag arguments are given (like `$ adc foo bar`), this is implied.
-	These can be chained together, which will execute them sequentially. `-i` has to be exited manually to continue the sequence.
+	Multiple of these can be used together, which will execute them sequentially. `-i` has to be exited manually to continue the sequence.
 
 	STATE MANAGEMENT
 	----------------
 	The whole interpreter state can be stored as a file using these flags (or in-language commands).
-	The state file is actually just an ADC script that follows a standard format. The "load" option erases the current state and executes the script.
+	State files are actually just ADC scripts that follow a standard format. The "load" option executes the script and discards the current state.
 	`-s|--save <path>` saves the state to a file, creating or overwriting it.
 	`-l|--load <path>` loads a state file, without creating or modifying it.
 	These are also chainable with the instruction flags, which will perform them as part of the sequence.
-	This executable tries to open all files specified with `-f`/`-s`/`-l` immediately, before any ADC code runs.
+	This executable tries to open all files specified with `-f`/`-s`/`-l` immediately, before any ADC code runs. It does not acquire exclusive locks, so beware of data races.
 
 	MODES
 	-----
-	`-r|--restricted`: Restricted mode, blocks all in-language commands that interact with the OS as a blanket protection against untrusted input.
+	`-r|--restricted`: Disables all in-language commands that interact with the OS to protect against untrusted input. Command line flags are unaffected.
 	`-d|--debug`: Debug mode, logs every executed command to stderr.
 	`-q|--quiet`: Quiet mode, suppresses all errors (disables stderr).
 	Debug and Quiet are mutually exclusive. The error display mode is controllable with in-language commands, these options just set the default.
@@ -93,7 +94,7 @@ fn main() -> ExitCode {
 			}
 			else {	//short-form flags:
 				let mut chars = flag.chars();
-				//only take the first char as a flag, `-efoo` and `-e foo` are equivalent
+				//only take the first char as a flag
 				let short = if let Some(c) = chars.next() {c}
 					else { return syntax_error("Empty flag: -".into()); };
 				args.push(Flag(short));
@@ -236,7 +237,7 @@ fn main() -> ExitCode {
 	//init state structs
 	let mut st = State::default();
 	let mut io = IOStreams::process();
-	let mut exit_code = 0;
+	let mut exit_code = 0.into();
 
 	'act: for act in acts {
 		use ExecResult::*;
@@ -251,8 +252,8 @@ fn main() -> ExitCode {
 
 							match res {
 								Finished => {continue 'repl;}
-								SoftQuit(i) => {exit_code = i; continue 'act;}
-								HardQuit(i) => {return i.into();}
+								SoftQuit(c) => {exit_code = c; continue 'act;}
+								HardQuit(c) => {return c;}
 							}
 						}
 						Err(e) => {
@@ -268,46 +269,48 @@ fn main() -> ExitCode {
 
 				match res {
 					Finished => {continue 'act;}
-					SoftQuit(i) => {exit_code = i; continue 'act;}
-					HardQuit(i) => {return i.into();}
+					SoftQuit(c) => {exit_code = c; continue 'act;}
+					HardQuit(c) => {return c;}
 				}
 			}
 			Script(mut fd) => {
 				let mut script = Vec::new();
-				if let Err(e) = fd.read_to_end(&mut script).map_err(|e| {runtime_error(format!("Unable to read script file: {e}"))}) {return e;}
+				if let Err(c) = fd.read_to_end(&mut script).map_err(|e| {runtime_error(format!("Unable to read script file: {e}"))}) {return c;}
 				let start = Utf8Iter::from(script);
 
 				let res = exec(&mut st, start, &mut io, ll, strict);
 
 				match res {
 					Finished => {continue 'act;}
-					SoftQuit(i) => {exit_code = i; continue 'act;}
-					HardQuit(i) => {return i.into();}
+					SoftQuit(c) => {exit_code = c; continue 'act;}
+					HardQuit(c) => {return c;}
 				}
 			}
 			Save(mut fd) => {
 				let map = |e: std::io::Error| {runtime_error(format!("Unable to write state file: {e}"))};
-				if let Err(e) = fd.set_len(0).map_err(map) {return e;}
-				if let Err(e) = fd.rewind().map_err(map) {return e;}
-				if let Err(e) = fd.write_all(&STATE_FILE_HEADER).map_err(map) {return e;}
-				if let Err(e) = fd.write_all(st.to_string().as_bytes()).map_err(map) {return e;}
+				if let Err(c) = fd.set_len(0).map_err(map) {return c;}
+				if let Err(c) = fd.rewind().map_err(map) {return c;}
+				if let Err(c) = fd.write_all(&STATE_FILE_HEADER).map_err(map) {return c;}
+				if let Err(c) = fd.write_all(st.to_string().as_bytes()).map_err(map) {return c;}
 			}
 			Load(mut fd) => {
 				//state files are just ADC scripts
 				let mut st_script = Vec::new();
-				if let Err(e) = fd.read_to_end(&mut st_script).map_err(|e| {runtime_error(format!("Unable to read state file: {e}"))}) {return e;}
+				if let Err(c) = fd.read_to_end(&mut st_script).map_err(|e| {runtime_error(format!("Unable to read state file: {e}"))}) {return c;}
 				if !st_script.starts_with(&STATE_FILE_HEADER) {return runtime_error("Invalid state file".into());}
 				let start = Utf8Iter::from(st_script);
 
-				st = State::default();
+				let mut nst = State::default();
 				let mut no_io = IOStreams::empty();
 
-				let res = exec(&mut st, start, &mut no_io, LogLevel::Quiet, true);	//delegate to normal interpreter
+				let res = exec(&mut nst, start, &mut no_io, LogLevel::Quiet, true);	//delegate to normal interpreter
 
-				if res!=Finished {return runtime_error("Invalid state file".into());}	//state files don't quit
+				if res != Finished {return runtime_error("Invalid state file".into());}	//state files don't quit
+				
+				st = nst;
 			}
 		}
 	}
 
-	exit_code.into()
+	exit_code
 }

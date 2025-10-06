@@ -21,7 +21,6 @@ use num::*;
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use lazy_static::lazy_static;
-use malachite::Rational;
 
 /// Added at the start of saved state files
 pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
@@ -47,7 +46,7 @@ impl Default for LineEditor {
 
 /// Generic input stream adapter trait, used for adding a proper line editor.
 ///
-/// Has a generic implementation for all [`BufRead`] types, `prompt` does nothing in that case.
+/// Comes with a generic implementation for all [`BufRead`] types, `prompt` does nothing in that case.
 pub trait ReadLine {
 	/// Display `prompt` if possible and read one line of input. The definition of "line" is not strict.
 	/// 
@@ -185,16 +184,16 @@ static CMDS: phf::Map<u8, Command> = {
 
 /// Results of running [`exec`], wrappers should handle these differently
 #[must_use]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ExecResult {
 	/// Commands ran to completion, request further input
 	Finished,
 
 	/// Exit of current instance requested (q), end context
-	SoftQuit(u8),
+	SoftQuit(std::process::ExitCode),
 
 	/// Complete exit requested (`q), terminate
-	HardQuit(u8)
+	HardQuit(std::process::ExitCode)
 }
 
 /// Interpreter entry point, executes ADC commands to modify state
@@ -210,21 +209,6 @@ pub enum ExecResult {
 /// - `strict`: Restricted mode switch, prevents OS access (for untrusted input). If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 #[cold] #[inline(never)] pub fn exec(st: &mut State, start: Utf8Iter, io: &mut IOStreams, mut ll: LogLevel, mut strict: bool) -> ExecResult {
 	use ExecResult::*;
-	use malachite::{Rational, Natural};
-	let rats = 
-	[
-		Rational::const_from_signeds(1,8),
-	];
-	let k = 0;
-	let o = Natural::const_from(10);
-	
-	for rat in rats {
-		let (neg, iparts, fparts, rparts) = digits(&rat, k, &o);
-		println!("{}", nnorm(neg, &iparts, &fparts, &rparts, &o));
-		println!("{}", nsci(neg, &iparts, &fparts, &rparts, &o));
-		println!("{}", nfrac(&rat, 0, &o));
-		println!("{}\n\n", nauto(&rat, k, &o));
-	}
 	
 	Finished
 }

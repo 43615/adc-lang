@@ -57,7 +57,7 @@ The reliance on stacks for storing data naturally leads to a postfix operator or
 - `Na Nb a -> Nz`: Command `a` pops two numbers *a,b* and pushes a resulting number *z*.
 - `b -> Nz`: `b` creates a number without taking input.
 - `Sa c`: `c` eats a string and doesn't return anything.
-- `dR -> Xz`: Command with register access (see [below](#registers)) which returns a value of any type.
+- `d⒭ -> Xz`: Command with register access (see [below](#registers)) which returns a value of any type.
 - `Na e`/`Sa e`: Overloaded command, works differently depending on the type(s) of the input(s).
 
 The "pure" commands that only ever touch the annotated inputs and outputs are called "arithmetic functions". Other commands behave in ways not shown by this syntax.
@@ -94,15 +94,17 @@ This implicit application of operations is limited to the pure arithmetic functi
   - If at least one is an array, promote any scalars to arrays of correct length and recurse. Examples:
     - `(1 2 3) 4 +` and `(1 2 3) (4 4 4) +` are equivalent (`(5 6 7)`).
     - `(1 (2 3 4)) ((5 6 7) 8) +` and `((1 1 1) (2 3 4)) ((5 6 7) (8 8 8)) +` are equivalent (`((6 7 8) (10 11 12))`).
-  - If there are multiple arrays, compare their lengths. Recurse on them if equal, abort if not.
+  - If there are multiple arrays of unequal length, abort the process.
 - In this implementation, the "recursion" is implemented using an iterative algorithm in heap memory and the "promotion" does not actually allocate a new array. This avoids stack overflow issues on real systems and utilizes a practical minimum amount of memory (tested with recursion depths in the millions). Other interpreter implementations should employ similar algorithms if possible.
 
 
 # Numbers
 
-This ADC interpreter uses the highly performant [Malachite](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently.
+This ADC interpreter uses the highly performant [Malachite](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base >=2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
 
-Some of the available mathematical functions are irrational-valued, which necessitates usage of floating-point arithmetic to achieve practical performance on real computers. This places hard limits on the range and precision of the arguments and results of these functions. As mentioned [above](#type-annotations-and-restricted-types), such numbers are annotated as `NF`. This interpreter uses 64-bit ("double precision") numbers as defined by IEEE 754 "binary64", which are natively supported by all CPUs made this century (citation needed).
+Some of the available mathematical functions are irrational-valued, which necessitates usage of floating-point arithmetic to achieve practical performance on real computers. This places hard limits on the range and precision of the arguments and results of these functions. As mentioned [above](#type-annotations-and-restricted-types), such numbers are annotated as `NF`. This interpreter uses 64-bit ("double precision") numbers as defined by IEEE 754 "binary64", which are natively supported by all CPUs worth using (citation needed).
+
+Some functions also have "integer" variants that aren't bound by these limits, but place further restrictions on the arguments. They are automatically selected instead of the floating-point variant whenever possible, as such results are always preferable.
 
 
 ## Number I/O
@@ -112,14 +114,15 @@ Numbers can be entered and printed in any base (radix) starting at 2. The format
 Format specifics:
 - Since `-` (minus/hyphen) is an arithmetic function, the character `` ` `` (grave/backtick) is used as the negative sign.
 - Fractional digits start with `.` (period). For values |x|<1, the leading 0 may be omitted. Recurring digits begin with the same `` ` `` character (at any point after the `.`) and continue until the number ends. For example, 1/700 can be entered as `` 0.00`142857 ``.
-- For bases higher than 10, the whole number must be prefixed by `'` (apostrophe). This will cause any letters to be processed as part of the number, until the number ends. Example with input base 16: `'dEaD.bEeF` = 57005.7458343505859375.
 - Scientific/exponential notation uses `@` (at sign) instead of the more conventional e/E. The exponent values themselves are always interpreted as decimal, but applied to the current input base. Negative exponents also use `` ` ``.
-- For bases above 36, a special `'enclosed'` format must be used. Numbers are represented as a space-separated series of digits, which are in decimal themselves. Negatives, fractionals and exponents work identically. Example with input base 100: `` '`12 3.45 0 67@`8' `` = -1203.450067 * 100^-8.
+- Bases above 10 use letters for digits after 9. To include letters in a number, it must be prefixed by `'` (apostrophe). Example with input base 16: `'dEaD.bEeF` = 57005.7458343505859375.
+- Bases above 36 use a special `'enclosed'` format. Numbers are represented as a space-separated series of digits, which are in decimal themselves. Negatives, fractionals and exponents work identically. Example with input base 100: `` '`12 3.45 0 67@`8' `` = -1203.450067 * 100^-8.
+  - Plain numbers without apostrophes are also accepted, and interpreted as decimal.
 
 Number output is controlled by the [parameters](#parameters) K and O. Additionally, there are 3 display formats:
 - Normal: `123456.7`
 - Scientific: `1.234567@5`
-- Fraction: `1234567 10 /`
+- Fraction: `1234567 10/`
 
 These are equally correct ways of expressing a number, as inputting them back would give the same value. By default, outputting a number generates all 3 formats and picks the shortest one (preference order as listed), but one of these may be forced using an additional parameter.
 
@@ -128,17 +131,17 @@ These are equally correct ways of expressing a number, as inputting them back wo
 
 These are options for controlling number I/O operations:
 - `NPa k` sets the output precision. This limits the amount of displayed significant digits, with 0 meaning unlimited.
-  - Normal: Counts all significant digits until K is reached. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are not displayed as such unless the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
+  - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
   - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater.
-- `K -> NNz` returns the current output precision.
-- `NNa i` sets the input base, must be at least 2. Bases 11-36 require an `'apostrophe` to include letters. Bases over 36 require the `'enclosed'` format, unless the number contains at most one integer and one fractional digit.
+- `K -> NPz` returns the current output precision.
+- `NNa i` sets the input base, must be at least 2. Bases 11-36 require an `'apostrophe` to include letters. Bases over 36 require the `'enclosed'` format, interpreted as decimal otherwise.
 - `I -> NNz` returns the current input base.
 - `NNa o` sets the output base, must be at least 2. Bases over 10 are always displayed with the `'apostrophe` prefix or in the `'enclosed'` format.
 - `O -> NNz` returns the current output base.
 - `_nnorm`, `_nsci`, `_nfrac` force the different number formats. `_nauto` picks the shortest one.
 
-The parameters are stored in bundles like (K, I, O, format), called a "context". These contexts are stored on their own stack, where the top context is the one that's used by any relevant operations. Curly brackets are used to control contexts in an easy-to-visualize way:
+The parameters are stored in bundles like (K, I, O, format), called a "context". These contexts are stored on their own stack, and any relevant operations always use the top context. Curly brackets are used to control contexts in a visually clear way:
 - `{` pushes a new context with the defaults (0, 10, 10, auto).
 - `}` pops the current context, creating a default one if there is none to return to.
 - `_clctx` clears all contexts, creating a default one.
@@ -174,6 +177,16 @@ Since nesting is required for any complex program, string input uses `[square br
 - `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is invalid otherwise.
 
 
+# Stack operations
+
+TODO
+
+
+# Array operations and indexing
+
+TODO
+
+
 # Registers
 
 Secondary storage locations that can be accessed in various ways.
@@ -193,9 +206,19 @@ Strings can be executed with the `x` command, which has several overloaded modes
 - If the arguments are arrays, their contents are executed analogously, first element first. The array is effectively reversed and appended to the call stack, which also necessarily flattens nested arrays. *a* must only contain strings, *b* (if used) can't contain any strings. For the dyadic form, the array lengths and nesting topologies must match exactly (as [usual](#array-polymorphism)).
 
 
-# Special commands
+# Other commands
 
-- `q` quits the ADC interpreter. If the [register pointer](#registers) is set, its value (lowest byte of integer part) is returned as the exit code.
+- `p` prints the top-of-stack value, leaving it unchanged.
+- `Xa P` pops and prints the top-of-stack.
+- `` `p ``/`` `P `` prints without a newline.
+- `fp`/`fP` prints the whole stack line-by-line, keeping/removing the contents. The top value is printed first, prefix `` ` `` to reverse.
+- `"` toggles string mode for these printing commands. Output is written to a string buffer instead of stdout, the closing `"` pushes the string to the stack.
+- `Xa z -> NZz` converts a value into its type discriminant:
+  - Scalars: Boolean is `` `1 ``, number is `` `2 ``, string is `` `3 ``.
+  - Arrays: Length of the array.
+- `fz -> NNz` returns the current depth of the stack (also considered an array).
+- `(Xa) Z -> (NZz)` converts an entire array to discriminants, keeping its nesting layout.
+- `q` quits the ADC interpreter. If the [register pointer](#registers) is set, the lowest byte of its integer part is returned as the exit code.
   - `` `q `` is a "hard" quit, which may be handled differently.
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on.

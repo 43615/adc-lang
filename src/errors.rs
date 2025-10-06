@@ -29,8 +29,8 @@ impl Display for FnErr {
 }
 impl std::error::Error for FnErr {}
 
-#[derive(Debug)]
-pub(crate) enum TypeLabel {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)] pub(crate) enum TypeLabel {
 	B, N, S, A
 }
 impl From<&Value> for TypeLabel {
