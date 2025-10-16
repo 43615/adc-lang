@@ -8,7 +8,9 @@ This Rust crate consists of a reference ADC language interpreter, as well as a d
 
 There is some behavior specific to this included CLI wrapper, which may not be present when using a different one. If you are implementing a wrapper, you should give it equivalent behavior whenever possible. In the following documentation, such behavior is annotated with "**CLI:**".
 
-For this implementation, the term "interpreter invocation" refers to one call of the `exec` function. This is the scope limit for any temporary options that aren't part of the `State`. **CLI:** Interpreter instances are invoked by `-i`, `-e`, and `-f`, where `-i` does it repeatedly until exited.
+All "permanent" data (main stack, registers, parameters) is stored in a `State` struct, which the interpreter mutates as it executes ADC code. There are some additional ways of manipulating the whole `State`.
+
+For this implementation, the term "interpreter instance" refers to one call of the `exec` function. This is the ultimate scope limit for any temporary options that aren't part of the `State`. **CLI:** Interpreter instances are invoked by `-i`, `-e`, and `-f`, where `-i` does it repeatedly until exited.
 
 
 # Core principles
@@ -60,15 +62,17 @@ The reliance on stacks for storing data naturally leads to a postfix operator or
 - `d⒭ -> Xz`: Command with register access (see [below](#registers)) which returns a value of any type.
 - `Na e`/`Sa e`: Overloaded command, works differently depending on the type(s) of the input(s).
 
-The "pure" commands that only ever touch the annotated inputs and outputs are called "arithmetic functions". Other commands behave in ways not shown by this syntax.
+The "pure" commands that only ever touch the annotated inputs and outputs are called "arithmetic functions", including those that operate on booleans/strings. Other commands behave in ways not shown by this syntax.
 
-Arithmetic functions can be monadic, dyadic, or triadic (take 1, 2, or 3 arguments from the stack) and return one resulting value (which may be an array).
+Arithmetic functions can be monadic, dyadic, or triadic (take 1, 2, or 3 arguments from the stack) and return one resulting value.
 
-Commands with register access take the next character as the register number, unless the register pointer is set.
+Commands with register access take the next command character as the register number, unless the register pointer is set.
 
-There are advanced/rarely used commands that don't fit the usual single character rule, instead being words that start with `_` (underscore) and run until the next whitespace character.
+The term "whitespace character" refers to ` ` (space), the ASCII control characters NUL, HT, LF, VT, FF, CR, and `#` (hash/number sign). Whitespace characters have no function, are never considered to be command characters where those are required, and end non-string literals. `#` starts a line comment, causing all characters until the next LF or the end of the macro to be ignored.
 
-Some commands have an alternative mode, which can be enabled with `` ` `` (also used for [negative numbers](#number-io)). It only applies to the immediately following command, forming a digraph.
+Some commands have an alternative mode accessed by prefixing `` ` `` (read as "alt", also used for [negative numbers](#number-io)). Additionally, there are some digraph commands that operate on arrays themselves (`a` prefix) or the main stack (`f` prefix).
+
+There are some advanced commands represented by words instead of the usual single characters, starting with `_` (underscore) and running until the next whitespace character.
 
 
 # Array polymorphism
@@ -119,12 +123,12 @@ Format specifics:
 - Bases above 36 use a special `'enclosed'` format. Numbers are represented as a space-separated series of digits, which are in decimal themselves. Negatives, fractionals and exponents work identically. Example with input base 100: `` '`12 3.45 0 67@`8' `` = -1203.450067 * 100^-8.
   - Plain numbers without apostrophes are also accepted, and interpreted as decimal.
 
-Number output is controlled by the [parameters](#parameters) K and O. Additionally, there are 3 display formats:
+Number output is controlled by the [parameters](#parameters) K, O, and M. There are 3 output modes:
 - Normal: `123456.7`
 - Scientific: `1.234567@5`
 - Fraction: `1234567 10/`
 
-These are equally correct ways of expressing a number, as inputting them back would give the same value. By default, outputting a number generates all 3 formats and picks the shortest one (preference order as listed), but one of these may be forced using an additional parameter.
+These are equally correct ways of expressing a number, as inputting them back would produce the same value. By default, outputting a number considers all 3 modes and picks the shortest one (preference order as listed), but one of these may be forced with the M parameter.
 
 
 ## Parameters
@@ -133,18 +137,19 @@ These are options for controlling number I/O operations:
 - `NPa k` sets the output precision. This limits the amount of displayed significant digits, with 0 meaning unlimited.
   - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
-  - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater.
+  - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater. This may give surprisingly incorrect results.
 - `K -> NPz` returns the current output precision.
 - `NNa i` sets the input base, must be at least 2. Bases 11-36 require an `'apostrophe` to include letters. Bases over 36 require the `'enclosed'` format, interpreted as decimal otherwise.
 - `I -> NNz` returns the current input base.
 - `NNa o` sets the output base, must be at least 2. Bases over 10 are always displayed with the `'apostrophe` prefix or in the `'enclosed'` format.
 - `O -> NNz` returns the current output base.
-- `_nnorm`, `_nsci`, `_nfrac` force the different number formats. `_nauto` picks the shortest one.
+- `NNa m` chooses a number output mode: 0 = auto, 1 = normal, 2 = scientific, 3 = fraction.
+- `M -> NNz` returns the current output mode.
 
-The parameters are stored in bundles like (K, I, O, format), called a "context". These contexts are stored on their own stack, and any relevant operations always use the top context. Curly brackets are used to control contexts in a visually clear way:
+The parameters are stored in bundles like (K, I, O, M), called a "context". These contexts are stored on their own stack, and any relevant operations always use the top context. Curly brackets are used to control contexts in a visually clear way:
 - `{` pushes a new context with the defaults (0, 10, 10, auto).
 - `}` pops the current context, creating a default one if there is none to return to.
-- `_clctx` clears all contexts, creating a default one.
+- `_clpar` clears all contexts, creating a default one.
 
 
 ## Arithmetic
@@ -160,7 +165,7 @@ The parameters are stored in bundles like (K, I, O, format), called a "context".
 
 Strings are sequences of Unicode characters, stored in the UTF-8 format.
 
-As in the original `dc`, strings enable programming since they can be executed as a series of commands (called a [macro](#macros) to differentiate from data strings).
+As in the original `dc`, strings enable programming since they can be executed as a series of commands ([macros](#macros)).
 
 Since nesting is required for any complex program, string input uses `[square brackets]` instead of quotes. Certain special characters may be inserted using familiar escape sequences:
 - `\a`: Bell (07)
@@ -172,14 +177,36 @@ Since nesting is required for any complex program, string input uses `[square br
 - `\r`: Carriage return (0D)
 - `\e`: Escape (1B)
 - `\\`: Backslash itself (5C)
-- `\[` and `\]`: Unpaired square brackets (5B, 5D), not processed as string delimiters. These need to be escaped multiple (2^N-1) times in nested strings, as one would do with quotes in other languages. Example: Executing `[[[foo\\\\\\\]bar]]]` parses it into `[[foo\\\]bar]]`, then `[foo\]bar]` and finally `foo]bar` (as it would be printed).
-  - This can be avoided using [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93 <TODO> +[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
-- `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is invalid otherwise.
+- `\[` and `\]`: Unpaired square brackets (5B, 5D), not processed as string delimiters. These need to be escaped multiple (2^N-1) times in nested strings, as one would do with quotes in other languages ("backslash explosion"). Example: Executing `[[[foo\\\\\\\]bar]]]` parses it into `[[foo\\\]bar]]`, then `[foo\]bar]` and finally `foo]bar` (as it would be printed).
+  - A nicer alternative is to use [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93 <TODO> +[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
+- `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is rejected otherwise.
+
+
+# Input and output
+
+The interpreter is connected to a standard set of I/O streams: Input, output, and error. The error stream works automatically, see [below](#errors).
+- `? -> Sz` reads one line of input into a string.
+  - `` Sa `? -> Sz `` additionally displays *a* as a prompt. Displaying prompts is implemented in this crate, but might not be in other IO wrappers.
+- `p` prints the top-of-stack value, leaving it unchanged.
+- `Xa P` pops and prints the top-of-stack.
+  - `` `p ``/`` Xa `P `` prints without a newline.
+- `fp`/`fP` prints the whole stack line-by-line, keeping/removing the contents. The top value is printed last, prefix `` ` `` to reverse.
+- `"` toggles string mode for these printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
+- **CLI:** uses the IO streams of the process, input has an additional [line editor](https://crates.io/crates/rustyline) to enable shortcuts and history. The library may be attached to other streams using a generic interface.
 
 
 # Stack operations
 
-TODO
+Essential commands for interacting with values already on the stack, or the stack itself.
+- `c` clears the stack.
+- `NPa C` deletes the top *a* values from the stack.
+- `d` duplicates the top-of-stack value. In this implementation, values are stored as shared references to enable efficient shallow copies.
+- `NPa D` duplicates the top *a* values, keeping their order.
+- `r` swaps the top 2 values.
+- `NPa R` rotates the top *a* values upwards, or downwards with `` ` ``.
+- `fz -> NPz` returns the current depth of the stack.
+- `fr` reverses the entire stack.
+- `NPa fR` reverses the top *a* values.
 
 
 # Array operations and indexing
@@ -189,7 +216,15 @@ TODO
 
 # Registers
 
-Secondary storage locations that can be accessed in various ways.
+Registers are auxiliary stacks, identified by rational indices. Commands that operate on registers are annotated with `⒭`, meaning that the command either takes the next command character as a register index (Unicode character value) or uses the "register pointer" if it's set.
+- `Xa :` sets the register pointer. Numbers are used literally, booleans and strings are [converted](#type-conversion) to an integer form (first bit/byte to most significant).
+  - `` `: -> Nz`` reads and clears the pointer, erroring if empty.
+- `Xa s⒭` saves a value to a register, overwriting the top if it exists.
+- `Xa S⒭` pushes a value to a register.
+- `l⒭ -> Xz` loads a value from a register, erroring if empty.
+- `L⒭ -> Xz` pops a value from a register, erroring if empty.
+- `Z⒭ -> NPz` returns the depth of a register.
+- `ff⒭` swaps the main stack with a register.
 
 
 # Type conversion
@@ -199,34 +234,50 @@ TODO
 
 # Macros
 
-Strings can be executed with the `x` command, which has several overloaded modes:
-- `SMa x` simply executes string *a* as a series of ADC commands.
+Strings containing ADC commands are called macros, to differentiate them from data strings. They can be executed with the `x` command, which has several overloaded modes:
+- `SMa x` simply executes macro *a*.
+  - Execution of nested macros is performed pseudorecursively using a call stack in heap memory. Nesting depth is practically unlimited, tail calls are optimized.
 - `SMa NNb x` executes *a* *b* times.
 - `SMa Bb x` executes *a* once for every `T` bit in *b*.
-- If the arguments are arrays, their contents are executed analogously, first element first. The array is effectively reversed and appended to the call stack, which also necessarily flattens nested arrays. *a* must only contain strings, *b* (if used) can't contain any strings. For the dyadic form, the array lengths and nesting topologies must match exactly (as [usual](#array-polymorphism)).
+- If the arguments are arrays, their contents are executed analogously, first element first. The arrays are effectively flattened and appended to the call stack in reverse order. *a* must only contain macros, *b* (if used) can't contain any strings. For the dyadic form, the array lengths and nesting topologies must match exactly (as [usual](#array-polymorphism)).
+
+
+## Multithreading
+
+Macro execution may also be delegated to a separate thread. Child threads are attached to [registers](#registers) in the parent thread and operate on their own `State`, the main stack of which is pushed to the register when complete.
+- `SMa X⒭`/`Sma NNb X⒭`/`SMa Bb X⒭` execute macros in a thread, syntax identical to `x`. The child starts with a blank `State`, or a copy of the parent's if prefixed with `` ` ``.
+- `j⒭` waits for the thread to finish, either by exhausting its commands or quitting. Then, the contents of the child's main stack are pushed to the register.
+- `` `j⒭ `` kills the thread. The child interpreter polls the kill signal when parsing commands or sleeping with `w`. Also pushes the stack to the register.
+- `J⒭ -> BBz` returns `T` if the thread is finished and can be joined immediately.
+- Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand-)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th -> Sz`.
+- [OS commands](#os-commands) are disabled in child threads to prevent data races, corruption of OS resources, and being unkillable while running child processes. [IO streams](#input-and-output) are safely shared using a mutex (note that `?` is a blocking operation).
 
 
 # Other commands
 
-- `p` prints the top-of-stack value, leaving it unchanged.
-- `Xa P` pops and prints the top-of-stack.
-- `` `p ``/`` `P `` prints without a newline.
-- `fp`/`fP` prints the whole stack line-by-line, keeping/removing the contents. The top value is printed first, prefix `` ` `` to reverse.
-- `"` toggles string mode for these printing commands. Output is written to a string buffer instead of stdout, the closing `"` pushes the string to the stack.
-- `Xa z -> NZz` converts a value into its type discriminant:
-  - Scalars: Boolean is `` `1 ``, number is `` `2 ``, string is `` `3 ``.
-  - Arrays: Length of the array.
-- `fz -> NNz` returns the current depth of the stack (also considered an array).
-- `(Xa) Z -> (NZz)` converts an entire array to discriminants, keeping its nesting layout.
+- `Xa z -> NZz` converts a value into its type discriminant: Boolean is `` `1 ``, number is `` `2 ``, string is `` `3 ``.
+- `NNa w` waits for *a* nanoseconds. The actual time may be different depending on platform/scheduling details.
+- `NNa N -> NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance. Still available in [restricted mode](#os-commands).
+  - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
 - `q` quits the ADC interpreter. If the [register pointer](#registers) is set, the lowest byte of its integer part is returned as the exit code.
   - `` `q `` is a "hard" quit, which may be handled differently.
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on.
+- `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving them unchanged. Use after large operations.
+- `_clall` clears the entire current state.
 
-There are some commands that interact with the OS, which may be disabled with "restricted mode" (**CLI:** `-r` flag).
-- gleeb
-- zorp
-- etc
+
+## OS commands
+
+There are some commands that interact with the OS running the interpreter. To protect against untrusted input, these may be disabled with "restricted mode" (**CLI:** `-r` flag), the `_restrict` command (one-way), or by building the crate with the `no_os` feature enabled.
+- `_sysarch -> Sz` returns the CPU architecture of the running system.
+- `_sysfamily -> Sz` returns the OS family of the running system.
+- `_sysos -> Sz` returns the OS name of the running system.
+- `Sa _save` saves the current state to a file specified by a path in *a*. State files are just ADC scripts that follow a special format.
+- `Sa _load` loads state file *a* if it's valid, overwriting the current state.
+- `Sa Sb _write` writes *a* to file *b*, creating/overwriting it if necessary.
+- `Sa Sb _append` appends *a* at the end of file *b*, creating it if necessary.
+- `Sa _read -> Sz` reads file *a* into a string.
 - TODO
 
 
@@ -236,15 +287,17 @@ Runtime errors fall into 2 categories, distinguished by `!` and `?`. These are p
 - Syntax error: `! Invalid command: 💀 (U+1F480)`
 - Value error: `? /: Can't divide by zero`
 
+Numbers contained in errors are printed with the default [parameters](#parameters). Errors that occur in [child threads](#multithreading) have the thread name added after the `!`/`?`.
+
 Error display modes/levels can be switched dynamically:
 - `_quiet`: Errors are not displayed at all, error stream is effectively disabled.
 - `_error`: Normal error display.
-- `_debug`: Displays one-line reports of every executed command.
+- `_debug`: Displays one-line reports of every executed command, prefixed with `DEBUG: `.
 - These options persist for one interpreter instance. **CLI:** Set to `_error` by default unless a `-d` or `-q` flag is set.
 
 If an error occurs, no action is performed. For value errors, this means that the faulty values are returned to the stack.
 
-To enable dynamic error handling, there is an "error pointer" mechanism:
-- When an error occurs, the offending command is saved and a counter is set to 1. Every command parsed after that will increment the counter, until the error is cleared or overwritten by a new one. This functionality does not depend on the error display mode.
-- `E -> (NPx SCy Sz)` reads and clears the error. *x* indicates how many commands ago the (most recent) error happened, *y* is the offending command, and *z* is the error message.
+To enable dynamic error handling and reformatting, there is an "error latch" mechanism:
+- When an error occurs, the offending command is saved and a counter is set to 0. Every command parsed after that will increment the counter, until the error is cleared or overwritten by a new one. This functionality does not depend on the error display mode.
+- `_err -> (NPx SCy Sz)` reads and clears the error. *x* indicates how many commands ago the (most recent) error happened, *y* is the offending command (NUL for unparseable macros), and *z* is the error message (without the `!`/`?` prefix or thread name).
 - This also persists for one interpreter instance.

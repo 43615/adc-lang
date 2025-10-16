@@ -1,25 +1,28 @@
-//! Impure commands that access the whole state, no rank-polymorphic application
+//! Impure commands that access the whole state, manual application.
+//!
+//! New resulting values are written to a `Vec` to enable redirection to array input.
 
-#![allow(dead_code)]	//TODO: make not dead
-
+use crate::structs::{State, Value};
+use std::sync::Arc;
 use malachite::Rational;
-use crate::structs::{State};
 
-///Impure command
-pub(crate) type Cmd = fn(&mut State) -> Result<(), &'static str>;
-macro_rules! cmd {
-    ($name:ident, $s: ident, $block:block) => {
-		pub(crate) fn $name($s: &mut State) -> Result<(), &'static str> {
+/// Impure command
+pub(crate) type Cmd = fn(&mut State) -> Result<Vec<Value>, String>;
+/// Function template for impure command
+#[macro_export] macro_rules! cmd {
+    ($name:ident, $st:ident $block:block) => {
+		pub(crate) fn $name($st: &mut State) -> Result<Vec<Value>, String> {
 			$block
 		}
 	}
 }
 
-///Impure command with register access
-pub(crate) type CmdR = fn(&mut State, &Rational) -> Result<(), &'static str>;
-macro_rules! cmdr {
-    ($name:ident, $s:ident, $ri:ident, $block:block) => {
-		pub(crate) fn $name($s: &mut State, $ri: &Rational) -> Result<(), &'static str> {
+/// Impure command with register access
+pub(crate) type CmdR = fn(&mut State, &Rational) -> Result<Vec<Value>, String>;
+/// Function template for impure command with register access
+#[macro_export] macro_rules! cmdr {
+    ($name:ident, $st:ident, $ri:ident $block:block) => {
+		pub(crate) fn $name($st: &mut State, $ri: &Rational) -> Result<Vec<Value>, String> {
 			$block
 		}
 	}

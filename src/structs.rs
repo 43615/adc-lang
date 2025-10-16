@@ -7,9 +7,10 @@ use malachite::{Natural, Rational};
 use regex::{Regex, RegexBuilder};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Display, Formatter};
-use std::rc::Rc;
-use std::sync::RwLock;
-use std::thread::JoinHandle;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, RwLock};
+use std::thread as th;
+use const_format::concatcp;
 
 #[derive(Debug)]
 pub enum Value {
@@ -55,7 +56,7 @@ impl Clone for Value {
 			S(s) => S(s.clone()),
 			//traverse array using heap pseudorecursion, perform (cloning) identity function on every value
 			//`exec1` takes over instead of continuing call recursion, `f` is never called on `A`.
-			A(_) => crate::fns::exec1(|v, _| Ok(v.clone()), self, false).unwrap()
+			A(_) => unsafe { crate::fns::exec1(|v, _| Ok(v.clone()), self, false).unwrap_unchecked() }
 		}
 	}
 }
@@ -134,19 +135,21 @@ impl Value {
 	}
 }
 
-/// Default printing function, `N` uses output base 10 and automatic format.
+/// Default printing function, `N` uses default parameters.
 impl Display for Value {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}", self.display(0, &Natural::const_from(10), NumOutMode::Auto))
+		write!(f, "{}", self.display(DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2, DEFAULT_PARAMS.3))
 	}
 }
 
 #[derive(Default, Debug)]
 pub struct Register {
-	pub v: Vec<Rc<Value>>,
-	pub th: Option<JoinHandle<Vec<Value>>>
+	/// Stack of values, [`Arc`] to allow shallow copies
+	pub v: Vec<Arc<Value>>,
+	/// Thread handle with result values, kill signal
+	pub th: Option<(th::JoinHandle<Vec<Value>>, Sender<()>)>
 }
-/// removes thread handles since they are unique
+/// Remove thread handles since they are unique
 impl Clone for Register {
 	fn clone(&self) -> Self {
 		Self {
@@ -167,28 +170,17 @@ pub struct RegStore {
 }
 impl RegStore {
 	/// get register reference, don't create a register if not present
-	pub(crate) fn try_get(&self, index: &Rational) -> Option<&Register> {
+	pub fn try_get(&self, index: &Rational) -> Option<&Register> {
 		usize::try_from(index).ok()
-			.and_then(|i| self.low.get(i))
+			.and_then(|u| self.low.get(u))
 			.or_else(|| self.high.get(index))
 	}
 
 	/// get mutable register reference, create register if necessary
-	pub(crate) fn get_mut(&mut self, index: &Rational) -> &mut Register {
+	pub fn get_mut(&mut self, index: &Rational) -> &mut Register {
 		usize::try_from(index).ok()
-			.and_then(|i| self.low.get_mut(i))
-			.unwrap_or_else(|| {
-				if !self.high.contains_key(index) {
-					self.high.insert(index.clone(), Register::default());
-				}
-				self.high.get_mut(index).unwrap()
-			})
-	}
-
-	/// discard empty registers and reallocate
-	pub(crate) fn trim(&mut self) {
-		self.high.retain(|_, reg| !reg.v.is_empty() || reg.th.is_some());
-		self.high.shrink_to_fit();
+			.and_then(|u| self.low.get_mut(u))
+			.unwrap_or_else(|| self.high.entry(index.clone()).or_default())
 	}
 }
 impl Default for RegStore {
@@ -229,11 +221,11 @@ impl RegexCache {
 	}
 }
 
-/// Hybrid iterator over UTF-8 strings, may be advanced by bytes or chars.
+/// Hybrid iterator over UTF-8 strings, may be advanced by bytes or chars. Does not expect valid UTF-8 internally.
 ///
-/// Convertible [`From`] owned|borrowed × bytes|strings. Manually set nonzero or OOB positions are handled as expected.
+/// Convertible [`From`] owned|borrowed × bytes|strings. Manually set nonzero positions are handled as expected.
 ///
-/// [`Self::try_next_char`] handles all possible invalid UTF-8 sequences, and is used for [`TryInto<String>`].
+/// [`Self::try_next_char`] parses a [`char`] if it's valid UTF-8, and is used for [`TryInto<String>`].
 #[derive(Clone, Debug)]
 pub enum Utf8Iter<'a> {
 	Owned {
@@ -297,13 +289,12 @@ impl Iterator for Utf8Iter<'_> {
 impl Utf8Iter<'_> {
 	/// Parses one UTF-8 character starting at the current position, advancing the position in-place.
 	///
-	/// Errors on invalid byte sequences and reports the erroneous values, `pos` only advances if parsing is successful.
+	/// Errors on invalid byte sequences and reports the erroneous values (in ADC literal format), `pos` only advances if parsing is successful.
 	///
 	/// Handles all possible UTF-8 encoding errors:
 	/// - Invalid bytes: C0, C1, F5–FF
 	/// - Character starting with a continuation byte (80–BF)
-	/// - Multi-byte character with missing bytes
-	/// - Non-continuation byte in multi-byte character
+	/// - Multi-byte character with missing / non-continuation byte(s)
 	/// - Overlong encodings (3-byte below U+0800 or 4-byte below U+10000)
 	/// - UTF-16 surrogates (U+D800–DFFF)
 	/// - Values above U+10FFFF
@@ -323,14 +314,14 @@ impl Utf8Iter<'_> {
 
 				//continuation byte
 				0x80..=0xBF => {
-					Err(format!("Continuation byte at start of character: {b0:02X}"))
+					Err(format!("Continuation byte at start of character: [\\{b0:02X}]"))
 				}
 
 				//2-byte char
 				0xC2..=0xDF => {
 					if let Some(b1) = bytes.get(*pos+1).copied() {
 						if !(0x80..=0xBF).contains(&b1) {
-							return Err(format!("Non-continuation byte in character: {b0:02X} {b1:02X}"));
+							return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}]"));
 						}
 						c = ((b0 & 0x1F) as u32) << 6
 							| (b1 & 0x3F) as u32;
@@ -339,7 +330,7 @@ impl Utf8Iter<'_> {
 						Ok(unsafe{char::from_u32_unchecked(c)})
 					}
 					else {
-						Err(format!("Unexpected end of string: {b0:02X}"))
+						Err(format!("Unexpected end of string: [\\{b0:02X}]"))
 					}
 				}
 
@@ -348,30 +339,30 @@ impl Utf8Iter<'_> {
 					if let Some(b1) = bytes.get(*pos+1).copied() {
 						if let Some(b2) = bytes.get(*pos+2).copied() {
 							if !(0x80..=0xBF).contains(&b1) {
-								return Err(format!("Non-continuation byte in character: {b0:02X} {b1:02X} {b2:02X}"));
+								return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
 							}
 							if !(0x80..=0xBF).contains(&b2) {
-								return Err(format!("Non-continuation byte in character: {b0:02X} {b1:02X} {b2:02X}"));
+								return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
 							}
 							c = ((b0 & 0x0F) as u32) << 12
 								| ((b1 & 0x3F) as u32) << 6
 								| (b2 & 0x3F) as u32;
 							if c < 0x0800 {
-								return Err(format!("Overlong encoding of U+{c:04X}: {b0:02X} {b1:02X} {b2:02X}"));
+								return Err(format!("Overlong encoding of U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
 							}
 							if (0xD800u32..=0xDFFFu32).contains(&c) {
-								return Err(format!("Unexpected UTF-16 surrogate U+{c:04X}: {b0:02X} {b1:02X} {b2:02X}"));
+								return Err(format!("Unexpected UTF-16 surrogate U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
 							}
 							//all good:
 							*pos += 3;
 							Ok(unsafe{char::from_u32_unchecked(c)})
 						}
 						else {
-							Err(format!("Unexpected end of string: {b0:02X} {b1:02X}"))
+							Err(format!("Unexpected end of string: [\\{b0:02X}\\{b1:02X}]"))
 						}
 					}
 					else {
-						Err(format!("Unexpected end of string: {b0:02X}"))
+						Err(format!("Unexpected end of string: [\\{b0:02X}]"))
 					}
 				}
 
@@ -381,42 +372,42 @@ impl Utf8Iter<'_> {
 						if let Some(b2) = bytes.get(*pos+2).copied() {
 							if let Some(b3) = bytes.get(*pos+3).copied() {
 								if !(0x80..=0xBF).contains(&b1) {
-									return Err(format!("Non-continuation byte in character: {b0:02X} {b1:02X} {b2:02X} {b3:02X}"));
+									return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
 								}
 								if !(0x80..=0xBF).contains(&b2) {
-									return Err(format!("Non-continuation byte in character: {b0:02X} {b1:02X} {b2:02X} {b3:02X}"));
+									return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
 								}
 								if !(0x80..=0xBF).contains(&b3) {
-									return Err(format!("Non-continuation byte in character: {b0:02X} {b1:02X} {b2:02X} {b3:02X}"));
+									return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
 								}
 								c = ((b0 & 0x07) as u32) << 18
 									| ((b1 & 0x3F) as u32) << 12
 									| ((b2 & 0x3F) as u32) << 6
 									| (b3 & 0x3F) as u32;
 								if c < 0x10000 {
-									return Err(format!("Overlong encoding of U+{c:04X}: {b0:02X} {b1:02X} {b2:02X} {b3:02X}"));
+									return Err(format!("Overlong encoding of U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
 								}
 								if c > 0x10FFFF {
-									return Err(format!("Out-of-range character U+{c:04X}: {b0:02X} {b1:02X} {b2:02X} {b3:02X}"));
+									return Err(format!("Out-of-range character U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
 								}
 								//all good:
 								*pos += 4;
 								Ok(unsafe{char::from_u32_unchecked(c)})
 							}
 							else {
-								Err(format!("Unexpected end of string: {b0:02X} {b1:02X} {b2:02X}"))
+								Err(format!("Unexpected end of string: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"))
 							}
 						}
 						else {
-							Err(format!("Unexpected end of string: {b0:02X} {b1:02X}"))
+							Err(format!("Unexpected end of string: [\\{b0:02X}\\{b1:02X}]"))
 						}
 					}
 					else {
-						Err(format!("Unexpected end of string: {b0:02X}"))
+						Err(format!("Unexpected end of string: [\\{b0:02X}]"))
 					}
 				}
 
-				0xC0 | 0xC1 | 0xF5.. => Err(format!("Invalid byte in string: {b0:02X}")),
+				0xC0 | 0xC1 | 0xF5.. => Err(format!("Invalid byte in string: [\\{b0:02X}]")),
 			}
 		}
 		else { 
@@ -424,12 +415,28 @@ impl Utf8Iter<'_> {
 		}
 	}
 	
-	pub fn is_finished(&self) -> bool {
+	pub(crate) fn is_finished(&self) -> bool {
 		let (bytes, pos): (&[u8], &usize) = match self {
 			Self::Borrowed {bytes, pos} => (bytes, pos),
 			Self::Owned {bytes, pos} => (bytes, pos)
 		};
 		bytes.len() <= *pos
+	}
+	
+	pub(crate) fn back(&mut self) {
+		let pos = match self {
+			Self::Borrowed {pos, ..} => pos,
+			Self::Owned {pos, ..} => pos
+		};
+		*pos -= 1;
+	}
+
+	pub(crate) fn rewind(&mut self) {
+		let pos = match self {
+			Self::Borrowed {pos, ..} => pos,
+			Self::Owned {pos, ..} => pos
+		};
+		*pos = 0;
 	}
 }
 
@@ -437,67 +444,95 @@ impl Utf8Iter<'_> {
 #[derive(Clone, Debug, Copy)]
 #[repr(u8)] pub enum NumOutMode { Auto, Norm, Sci, Frac }
 
-/// Stack for numeric IO parameter contexts (K,I,O), with checked accessors
+/// Parameter context tuple: (K, I, O, M)
+pub type Params = (usize, Natural, Natural, NumOutMode);
+
+/// Default values (0, 10, 10, auto)
+pub const DEFAULT_PARAMS: Params = {
+	(0, Natural::const_from(10), Natural::const_from(10), NumOutMode::Auto)
+};
+
+/// Stack for numeric IO parameter contexts, with checked accessors
 #[derive(Clone, Debug)]
-#[repr(transparent)] pub struct ParamStk(Vec<(usize, Natural, Natural, NumOutMode)>);
+#[repr(transparent)] pub struct ParamStk(Vec<Params>);
 impl ParamStk {
-	/// Create new context with defaults 0,10,10,auto
+	/// Creates new context with default values
 	pub fn create(&mut self) {
-		self.0.push((0, Natural::const_from(10), Natural::const_from(10), NumOutMode::Auto))
+		self.0.push(DEFAULT_PARAMS)
 	}
 
-	/// Return to previous context, create default if at bottom
+	/// Returns to previous context, create default if at bottom
 	pub fn destroy(&mut self) {
 		self.0.pop();
 		if self.0.is_empty() {self.create();}
 	}
 
-	/// Discard all contexts, create default
+	/// Discards all contexts, creates default
 	pub fn clear(&mut self) {
 		*self = Self::default();
 	}
 
+	/// Extracts the underlying [`Vec`] for manual access
+	pub fn into_inner(self) -> Vec<Params> {
+		self.0
+	}
+
+	/// Creates [`Self`] from an underlying [`Vec`], length must be at least 1
+	pub fn try_from_inner(v: Vec<Params>) -> Option<Self> {
+		(!v.is_empty()).then_some(Self(v))
+	}
+
 	/// Checked edit of current output precision
-	pub fn set_k(&mut self, r: &Rational) -> Result<(), String> {
+	pub fn try_set_k(&mut self, r: &Rational) -> Result<(), &'static str> {
 		if let Ok(u) = r.try_into() {
-			self.0.last_mut().unwrap().0 = u;
+			unsafe { self.0.last_mut().unwrap_unchecked().0 = u; }
 			Ok(())
 		}
-		else {Err(format!("Output precision must be a natural number <={}", usize::MAX))}
+		else {Err(concatcp!("Output precision must be a natural number <={}", usize::MAX))}
 	}
 
 	/// Checked edit of current input base
-	pub fn set_i(&mut self, r: &Rational) -> Result<(), &'static str> {
+	pub fn try_set_i(&mut self, r: &Rational) -> Result<(), &'static str> {
 		if let Ok(n) = r.try_into() && n>=2u8 {
-			self.0.last_mut().unwrap().1 = n;
+			unsafe { self.0.last_mut().unwrap_unchecked().1 = n; }
 			Ok(())
 		}
 		else {Err("Input base must be a natural number >=2")}
 	}
 
 	/// Checked edit of current output base
-	pub fn set_o(&mut self, r: &Rational) -> Result<(), &'static str> {
+	pub fn try_set_o(&mut self, r: &Rational) -> Result<(), &'static str> {
 		if let Ok(n) = r.try_into() && n>=2u8 {
-			self.0.last_mut().unwrap().2 = n;
+			unsafe { self.0.last_mut().unwrap_unchecked().2 = n; }
 			Ok(())
 		}
 		else {Err("Output base must be a natural number >=2")}
 	}
 
 	/// Set number output mode
-	pub fn set_mode(&mut self, m: NumOutMode) {self.0.last_mut().unwrap().3 = m;}
+	pub fn set_m(&mut self, m: NumOutMode) {
+		unsafe { self.0.last_mut().unwrap_unchecked().3 = m; }
+	}
 
 	/// Current output precision
-	pub fn k(&self) -> usize {self.0.last().unwrap().0}
+	pub fn get_k(&self) -> usize {
+		unsafe { self.0.last().unwrap_unchecked().0 }
+	}
 
 	/// Current input base
-	pub fn i(&self) -> &Natural {&self.0.last().unwrap().1}
+	pub fn get_i(&self) -> &Natural {
+		unsafe { &self.0.last().unwrap_unchecked().1 }
+	}
 
 	/// Current output base
-	pub fn o(&self) -> &Natural {&self.0.last().unwrap().2}
+	pub fn get_o(&self) -> &Natural {
+		unsafe { &self.0.last().unwrap_unchecked().2 }
+	}
 
 	/// Current number output mode
-	pub fn mode(&self) -> NumOutMode {self.0.last().unwrap().3}
+	pub fn get_m(&self) -> NumOutMode {
+		unsafe { self.0.last().unwrap_unchecked().3 }
+	}
 }
 impl Default for ParamStk {
 	fn default() -> Self {
@@ -509,27 +544,30 @@ impl Default for ParamStk {
 
 /// Combined interpreter state storage
 ///
-/// Typically, just use the [`Default`]. Fields are public to allow for presets and extraction of values, check their documentation.
+/// Typically, just use the [`Default`]. Fields are public to allow for presets and extraction of values, see their documentation.
 #[derive(Default, Clone, Debug)]
 pub struct State {
-	/// main stack, [`Rc`] to allow shallow copies
-	pub mstk: Vec<Rc<Value>>,
+	/// Main stack, [`Arc`] to allow shallow copies
+	pub mstk: Vec<Arc<Value>>,
 
-	/// registers
+	/// Registers
 	pub regs: RegStore,
 
-	/// parameters
-	pub params: ParamStk,
-
-	/// register pointer
-	pub rptr: Option<Rational>,
-
-	/// array pointer
-	pub aptr: Vec<usize>
+	/// Parameters
+	pub params: ParamStk
 }
 /// Export to state file with standard format
 impl Display for State {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		todo!()
+	}
+}
+impl State {
+	/// Reallocate all fields to fit, do not discard any stored data
+	pub fn trim(&mut self) {
+		self.mstk.shrink_to_fit();
+		self.regs.high.retain(|_, reg| !reg.v.is_empty() || reg.th.is_some());
+		self.regs.high.shrink_to_fit();
+		self.params.0.shrink_to_fit();
 	}
 }

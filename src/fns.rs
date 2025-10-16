@@ -1,10 +1,6 @@
 //! Pure functions and rank-polymorphic execution engine
 //! 
 //! Functions have 1, 2, or 3 `&Value` parameters (monadic, dyadic, triadic) and a boolean mode switch (false by default, enabled by \` command).
-//! 
-//! Nested array traversal functions map
-
-#![allow(dead_code)]	//TODO: make not dead
 
 use std::collections::{VecDeque};
 use std::ptr::NonNull;
@@ -22,7 +18,7 @@ pub(crate) type Mon = fn(&Value, bool) -> Result<Value, FnErr>;
 macro_rules! mon {
     ($name:ident $($pa:pat, $m:pat => $op:expr),*) => {
 		pub(crate) fn $name(a: &Value, m: bool) -> Result<Value, FnErr> {
-			match (a,m) {
+			match (a, m) {
 				$(($pa, $m) => $op,)*
 				_ => Err(Type1(a.into()))
 			}
@@ -36,7 +32,7 @@ pub(crate) type Dya = fn(&Value, &Value, bool) -> Result<Value, FnErr>;
 macro_rules! dya {
     ($name:ident $($pa:pat, $pb:pat, $m:pat => $op:expr),*) => {
 		pub(crate) fn $name(a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
-			match (a,b,m) {
+			match (a, b, m) {
 				$(($pa, $pb, $m) => $op,)*
 				_ => Err(Type2(a.into(), b.into()))
 			}
@@ -50,7 +46,7 @@ pub(crate) type Tri = fn(&Value, &Value, &Value, bool) -> Result<Value, FnErr>;
 macro_rules! tri {
     ($name:ident $($pa:pat, $pb:pat, $pc:pat, $m:pat => $op:expr),*) => {
 		pub(crate) fn $name(a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, FnErr> {
-			match (a,b,c,m) {
+			match (a, b, c, m) {
 				$(($pa, $pb, $pc, $m) => $op,)*
 				_ => Err(Type3(a.into(), b.into(), c.into()))
 			}

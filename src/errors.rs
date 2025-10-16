@@ -16,13 +16,13 @@ pub(crate) enum FnErr {
 impl Display for FnErr {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Self::Type1(ta) => {write!(f, "value of invalid type: {ta}")}
-			Self::Type2(ta,tb) => {write!(f, "values of invalid types: {ta}, {tb}")}
-			Self::Type3(ta,tb,tc) => {write!(f, "values of invalid types: {ta}, {tb}, {tc}")}
-			Self::Len2(la, lb) => {write!(f, "arrays of different length: {la}, {lb}")}
-			Self::Len3(la, lb, lc) => {write!(f, "arrays of different length: {la}, {lb}, {lc}")}
-			Self::Index(ia) => {write!(f, "index out of range: {ia}")}
-			Self::Arith(s) => {write!(f, "arithmetic error: {s}")}
+			Self::Type1(ta) => {write!(f, "Wrong argument type, {ta} given")}
+			Self::Type2(ta,tb) => {write!(f, "Wrong argument types, {ta},{tb} given")}
+			Self::Type3(ta,tb,tc) => {write!(f, "Wrong argument types, {ta},{tb},{tc} given")}
+			Self::Len2(la, lb) => {write!(f, "Arrays of different length: {la},{lb}")}
+			Self::Len3(la, lb, lc) => {write!(f, "Arrays of different length: {la},{lb},{lc}")}
+			Self::Index(ia) => {write!(f, "Index out of range: {ia}")}
+			Self::Arith(s) => {write!(f, "Arithmetic error: {s}")}
 			Self::Custom(s) => {write!(f, "{s}")}
 		}
 	}

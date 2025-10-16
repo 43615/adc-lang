@@ -1,14 +1,16 @@
 //! Executable CLI wrapper
 
 use std::convert::Into;
-use adc_lang::*;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, Write};
+use std::io::{ErrorKind, Read, Seek, Write};
 use std::process::ExitCode;
+use std::sync::Mutex;
+use adc_lang::*;
 use adc_lang::structs::{State, Utf8Iter};
 
 const HELP: &str = r#"
-ADC: Array-oriented reimagining of dc, a terse stack-based esolang (terminal-based wrapper executable)
+ADC: Array-oriented reimagining of dc, a terse RPN esolang
+	Terminal-based wrapper executable
 
 Full documentation and source code: https://github.com/43615/adc-lang
 
@@ -19,7 +21,7 @@ Long and short flags are interchangeable. Short flags may not be concatenated: `
 	INSTRUCTIONS
 	------------
 	`-i|--inter <prompt>?` starts an interactive (REPL) session. May use a custom prompt, the default is `> `.
-		This is the default if no instructions are given.
+		This is the default if no instructions are given. ^C and ^D end the session.
 	`-e|--exec <macro>*` executes the argument(s) directly as a sequence of ADC commands.
 		Ensure that characters with special uses in your shell's syntax are ignored/escaped properly.
 	`-f|--file <path>*` executes the specified file(s) as a script, without creating or modifying it.
@@ -37,7 +39,8 @@ Long and short flags are interchangeable. Short flags may not be concatenated: `
 
 	MODES
 	-----
-	`-r|--restricted`: Disables all in-language commands that interact with the OS to protect against untrusted input. Command line flags are unaffected.
+	`-r|--restrict`: Disables all in-language commands that interact with the OS to protect against untrusted input. Other command line flags are unaffected.
+		Disabling OS commands is also possible with the in-language command `_restrict` (one-way) or the `no_os` crate feature.
 	`-d|--debug`: Debug mode, logs every executed command to stderr.
 	`-q|--quiet`: Quiet mode, suppresses all errors (disables stderr).
 	Debug and Quiet are mutually exclusive. The error display mode is controllable with in-language commands, these options just set the default.
@@ -81,7 +84,7 @@ fn main() -> ExitCode {
 						"file" => {'f'}
 						"save" => {'s'}
 						"load" => {'l'}
-						"restricted" => {'r'}
+						"restrict" => {'r'}
 						"debug" => {'d'}
 						"quiet" => {'q'}
 						"help" => {'h'}
@@ -236,7 +239,7 @@ fn main() -> ExitCode {
 
 	//init state structs
 	let mut st = State::default();
-	let mut io = IOStreams::process();
+	let io = Mutex::new(IOStreams::process());
 	let mut exit_code = 0.into();
 
 	'act: for act in acts {
@@ -244,20 +247,33 @@ fn main() -> ExitCode {
 		match act {
 			Inter(prompt) => {
 				'repl: loop {
-					match io.0.read_line(&prompt) {
+					match io.lock().unwrap().0.read_line(&prompt) {
 						Ok(line) => {
 							let start = Utf8Iter::from(line.as_bytes());
 
-							let res = exec(&mut st, start, &mut io, ll, strict);
+							let res = interpreter(&mut st, start, &io, ll, None, strict);
 
 							match res {
-								Finished => {continue 'repl;}
-								SoftQuit(c) => {exit_code = c; continue 'act;}
-								HardQuit(c) => {return c;}
+								Ok(Finished) => {continue 'repl;}
+								Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
+								Ok(HardQuit(c)) => {return c;}
+								Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 							}
 						}
 						Err(e) => {
-							return runtime_error(format!("Interactive mode error: {e}"));
+							match e.kind() {
+								ErrorKind::Interrupted => {
+									eprintln!("Interrupted");
+									continue 'act;
+								},
+								ErrorKind::UnexpectedEof => {
+									eprintln!("EOF");
+									continue 'act;
+								}
+								_ => {
+									return runtime_error(format!("Interactive mode error: {e}"));
+								}
+							}
 						}
 					}
 				}
@@ -265,12 +281,13 @@ fn main() -> ExitCode {
 			Macro(mac) => {
 				let start = Utf8Iter::from(mac.as_bytes());
 
-				let res = exec(&mut st, start, &mut io, ll, strict);
+				let res = interpreter(&mut st, start, &io, ll, None, strict);
 
 				match res {
-					Finished => {continue 'act;}
-					SoftQuit(c) => {exit_code = c; continue 'act;}
-					HardQuit(c) => {return c;}
+					Ok(Finished) => {continue 'act;}
+					Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
+					Ok(HardQuit(c)) => {return c;}
+					Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 				}
 			}
 			Script(mut fd) => {
@@ -278,12 +295,13 @@ fn main() -> ExitCode {
 				if let Err(c) = fd.read_to_end(&mut script).map_err(|e| {runtime_error(format!("Unable to read script file: {e}"))}) {return c;}
 				let start = Utf8Iter::from(script);
 
-				let res = exec(&mut st, start, &mut io, ll, strict);
+				let res = interpreter(&mut st, start, &io, ll, None, strict);
 
 				match res {
-					Finished => {continue 'act;}
-					SoftQuit(c) => {exit_code = c; continue 'act;}
-					HardQuit(c) => {return c;}
+					Ok(Finished) => {continue 'act;}
+					Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
+					Ok(HardQuit(c)) => {return c;}
+					Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 				}
 			}
 			Save(mut fd) => {
@@ -301,11 +319,11 @@ fn main() -> ExitCode {
 				let start = Utf8Iter::from(st_script);
 
 				let mut nst = State::default();
-				let mut no_io = IOStreams::empty();
+				let no_io = Mutex::new(IOStreams::empty());
 
-				let res = exec(&mut nst, start, &mut no_io, LogLevel::Quiet, true);	//delegate to normal interpreter
+				let res = interpreter(&mut nst, start, &no_io, LogLevel::Quiet, None, true);	//delegate to normal interpreter
 
-				if res != Finished {return runtime_error("Invalid state file".into());}	//state files don't quit
+				if res.unwrap() != Finished {return runtime_error("Invalid state file".into());}	//state files don't quit
 				
 				st = nst;
 			}

@@ -1,18 +1,23 @@
 [package]
 name = "adc-lang"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 repository = "https://github.com/43615/adc-lang"
-description = "Array-oriented reimagining of dc, a terse stack-based esolang"
+description = "Array-oriented reimagining of dc, a terse RPN esolang"
 license = "Unlicense"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+no_os = []
+
 [dependencies]
 malachite = { version = "=0.7.0", features = ["32_bit_limbs", "random"] }
 bitvec = "=1.0.1"
+getrandom = { version = "=0.3.4", features = ["std"] }
+const_format = "=0.2.35"
 unchecked-index = "=0.2.2"
-regex = "=1.11.3"
+regex = "=1.12.2"
 lazy_static = "=1.5.0"
 phf = { version = "=0.13.1", features = ["macros"]}
 rustyline = "=17.0.2"
@@ -21,7 +26,7 @@ rustyline = "=17.0.2"
 lto = "fat"
 incremental = true
 codegen-units = 1
-panic = "abort"
+panic = "unwind"
 opt-level = 3
 
 [[bin]]
