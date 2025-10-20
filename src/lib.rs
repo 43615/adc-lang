@@ -192,16 +192,16 @@ const CMDS: [Command; 256] = {
 		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Special,	Wrong,		Wrong,		Wrong,		Wrong,		Special,
 
 		//@			A			B			C			D			E			F			G			H			I			J			K			L			M			N			O
-		Lit,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Lit,		Fn2(logb),	Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,
+		Lit,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	Wrong,		Cmd(gk),	Wrong,		Cmd(gm),	Wrong,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
 		Special,	Special,	Wrong,		Wrong,		Lit,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Wrong,		Lit,		Special,	Wrong,		Fn2(pow),	Special,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
-		Special,	Special,	Wrong,		Wrong,		Wrong,		Wrong,		Special,	Fn1(log),	Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,
+		Special,	Special,	Wrong,		Wrong,		Wrong,		Wrong,		Special,	Fn1(log),	Wrong,		Cmd(si),	Wrong,		Cmd(sk),	Wrong,		Cmd(sm),	Wrong,		Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Special,	Special,	Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Fn1(disc),	Wrong,		Fn3(bar),	Wrong,		Fn2(euc),	Wrong,
+		Special,	Special,	Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
 
 		//~~description of what i'm doing:~~ non-ASCII:
 		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
@@ -400,7 +400,7 @@ pub enum ExecResult {
     		($v:expr) => {
 				if let Some(p) = dest.last_mut() {
 					unsafe {
-						p.as_mut().push($v);
+						p.as_mut().push($v);	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
 					}
 				}
 				else {
@@ -413,7 +413,7 @@ pub enum ExecResult {
     		($v:expr) => {
 				if let Some(p) = dest.last_mut() {
 					unsafe {
-						p.as_mut().append(&mut $v);
+						p.as_mut().append(&mut $v);	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
 					}
 				}
 				else {
@@ -530,6 +530,7 @@ pub enum ExecResult {
 					else {
 						if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
 							synerr!(b as char, "Command '{}' needs a register index", b as char);
+							alt = false;
 							continue 'cmd;
 						}
 						Rational::from(
@@ -560,14 +561,14 @@ pub enum ExecResult {
 						},
 						b'?' => {	//read line
 							let prompt = if alt {
-								if let Some(val) = st.mstk.pop() {
-									match &*val {
+								if let Some(va) = st.mstk.pop() {
+									match &*va {
 										Value::S(s) => {
 											s.clone()
 										},
 										_ => {
-											let t = errors::TypeLabel::from(&*val);
-											st.mstk.push(val);
+											let t = errors::TypeLabel::from(&*va);
+											st.mstk.push(va);
 											synerr!('Q', "Command '`?' needs a string, {} given", t);
 											alt = false;
 											continue 'cmd;
@@ -576,6 +577,7 @@ pub enum ExecResult {
 								}
 								else {
 									synerr!('?', "Command '`?' needs 1 argument, 0 given");
+									alt = false;
 									continue 'cmd;
 								}
 							}
@@ -603,12 +605,12 @@ pub enum ExecResult {
 						},
 						b'p' => {	//print top
 							match (st.mstk.last(), alt) {
-								(Some(val), false) => {
-									outln!(&val.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
-								},
-								(Some(val), true) => {
-									out!(&val.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
-								},
+								(Some(va), false) => {
+									outln!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
+								}
+								(Some(va), true) => {
+									out!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
+								}
 								(None, false) => {
 									synerr!('p', "Command 'p': Stack is empty");
 								},
@@ -619,12 +621,12 @@ pub enum ExecResult {
 						},
 						b'P' => {	//pop and print top
 							match (st.mstk.pop(), alt) {
-								(Some(val), false) => {
-									outln!(&val.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
-								},
-								(Some(val), true) => {
-									out!(&val.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
-								},
+								(Some(va), false) => {
+									outln!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
+								}
+								(Some(va), true) => {
+									out!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
+								}
 								(None, false) => {
 									synerr!('P', "Command 'P' needs 1 argument, 0 given");
 								},
@@ -645,8 +647,14 @@ pub enum ExecResult {
 							if !dest.is_empty() {	//first layer already exists
 								abuf.push(Value::default());
 							}
-							let Value::A(new) = abuf.last_mut().unwrap() else { unreachable!() };
-							dest.push(new.into());
+							dest.push(
+								if let Some(Value::A(new)) = abuf.last_mut() {
+									new.into()	//new nested array
+								}
+								else {
+									(&mut abuf).into()	//abuf itself as first layer
+								}
+							);
 						},
 						b')' => {	//array input: close
 							if dest.is_empty() {
@@ -667,8 +675,8 @@ pub enum ExecResult {
 							};
 						},
 						b'Q' => {
-							if let Some(val) = st.mstk.pop() {
-								match &*val {
+							if let Some(va) = st.mstk.pop() {
+								match &*va {
 									Value::N(r) => {
 										if let Ok(u) = usize::try_from(r) {
 											call.truncate(call.len().saturating_sub(u));
@@ -678,14 +686,14 @@ pub enum ExecResult {
 											continue 'mac;
 										}
 										else {
-											let s = val.to_string();
-											st.mstk.push(val);
+											let s = va.to_string();
+											st.mstk.push(va);
 											valerr!('Q', "Command 'Q': Cannot possibly break {} macros", s);
 										}
 									},
 									_ => {
-										let t = errors::TypeLabel::from(&*val);
-										st.mstk.push(val);
+										let t = errors::TypeLabel::from(&*va);
+										st.mstk.push(va);
 										synerr!('Q', "Command 'Q' needs a number, {} given", t);
 									}
 								}
@@ -716,52 +724,52 @@ pub enum ExecResult {
 						},
 						b'N' => {
 							match (st.mstk.pop(), alt) {
-								(Some(val), false) => {	//get random natural
-									match &*val {
+								(Some(va), false) => {	//get random natural
+									match &*va {
 										Value::N(r) => {
 											match Natural::try_from(r) {
 												Ok(n) => {
 													push!(Value::N(Rational::from(get_random_natural_less_than(&mut rng, &n))));
 												},
 												_ => {
-													st.mstk.push(val);
+													st.mstk.push(va);
 													valerr!('N', "Command 'N': Limit must be a natural number");
 												}
 											}
 										},
 										_ => {
-											let t = errors::TypeLabel::from(&*val);
-											st.mstk.push(val);
+											let t = errors::TypeLabel::from(&*va);
+											st.mstk.push(va);
 											synerr!('N', "Command 'N' needs a number, {} given", t);
 										}
 									}
-								},
-								(Some(val), true) => {	//seed rng
-									match &*val {
+								}
+								(Some(va), true) => {	//seed rng
+									match &*va {
 										Value::N(r) => {
 											match Integer::try_from(r) {
 												Ok(Integer::NEGATIVE_ONE) => {	//return to os seed
 													rng = LazyCell::new(rng_os);
 												},
 												Ok(i) if Natural::convertible_from(&i) => {	//custom seed
-													let n= unsafe { Natural::try_from(i).unwrap_unchecked() };
+													let n= unsafe { Natural::try_from(i).unwrap_unchecked() };	//SAFETY: just checked
 													let mut bytes: Vec<u8> = PowerOf2DigitIterable::<u8>::power_of_2_digits(&n, 8).take(32).collect();
 													bytes.resize(32, 0);
 													*rng = rng_preset( unsafe { <[u8; 32]>::try_from(bytes).unwrap_unchecked() } );
 												},
 												_ => {
-													st.mstk.push(val);
+													st.mstk.push(va);
 													valerr!('N', "Command '`N': Seed must be a natural number or `1");
 												}
 											}
 										},
 										_ => {
-											let t = errors::TypeLabel::from(&*val);
-											st.mstk.push(val);
+											let t = errors::TypeLabel::from(&*va);
+											st.mstk.push(va);
 											synerr!('N', "Command '`N' needs a number, {} given", t);
 										}
 									}
-								},
+								}
 								(None, false) => {
 									synerr!('N', "Command 'N' needs 1 argument, 0 given");
 								},
@@ -812,6 +820,7 @@ pub enum ExecResult {
 								},
 								b"trim" => {
 									st.trim();
+									RE_CACHE.clear();
 								},
 								b"clpar" => {
 									st.params = ParamStk::default();
@@ -827,8 +836,8 @@ pub enum ExecResult {
 									#[cfg(not(feature = "no_os"))]
 									{
 										match (restrict, os::OS_CMDS.get(&word).copied()) {
-											(false, Some(cmd)) => {
-												match cmd(st) {
+											(false, Some(oscmd)) => {
+												match oscmd(st) {
 													Ok(mut v) => {
 														append!(v);
 													}
@@ -836,7 +845,7 @@ pub enum ExecResult {
 														valerr!('_', "OS command '{}': {}", string_or_bytes(&word), e);
 													}
 												}
-											},
+											}
 											(true, Some(_)) => {
 												valerr!('_', "OS command '{}' is disabled (restricted mode)", string_or_bytes(&word));
 											},
@@ -852,7 +861,18 @@ pub enum ExecResult {
 					}
 				},
 				Lit => {
-					todo!()
+					match b {
+						b'T' | b'F' => {	//booleans
+							
+						},
+						b'\'' | b'0'..=b'9' | b'.' | b'@' => {	//numbers
+
+						},
+						b'[' => {	//strings
+
+						},
+						_ => unreachable!()
+					}
 				},
 				Space if b == b'#' => {	//line comment
 					mac.find(|b| *b == b'\n');
