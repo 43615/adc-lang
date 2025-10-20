@@ -11,13 +11,15 @@ This is a project to introduce array programming paradigms and other improvement
 - Interpreter performance comparable to a compiled language.
 
 
-## Building/Installation
+## Building/Installation, compatibility
 
-This crate is available on crates.io. With a working Rust environment, you can just run:
+This project is available on crates.io. With a working Rust environment, you can just run:
 ```sh
 cargo install adc-lang
 ```
 or, of course, `build`. If you want to disable OS-related functionality, add the option `-F no_os`.
+
+This crate should work on all systems supported by Rust. However, I do not extensively test it on anything other than x86-64 Linux. Please report any platform-related issues.
 
 
 ## Improvements over dc:
@@ -41,8 +43,3 @@ or, of course, `build`. If you want to disable OS-related functionality, add the
 - Algorithms with optimal performance for large inputs, even at the cost of some flat inefficiency for small inputs. This is also the case for Malachite's arithmetic functions.
 - Array-related functions support arbitrary nesting by using iterative algorithms instead of recursive calls.
 - No use of generative AI of any kind, all of this is made by humans.
-
-
-## Platform compatibility
-
-This crate should work on all systems supported by Rust. However, I do not extensively test it on anything other than x86-64 Linux. Please report any platform-related issues.

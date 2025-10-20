@@ -124,15 +124,15 @@ fn main() -> ExitCode {
 	let mut strict = false;
 	let mut ll = LogLevel::Normal;
 
-	fn try_reading_fd(filename: &str) -> Result<File, ExitCode> {
-		OpenOptions::new().read(true).open(filename).map_err(|e|{
-			runtime_error(format!("Can't open file `{filename}` for reading: {e}"))
+	fn try_reading_fd(name: &str) -> Result<File, ExitCode> {
+		OpenOptions::new().read(true).open(name).map_err(|e|{
+			runtime_error(format!("Can't open file '{name}' for reading: {e}"))
 		})
 	}
 
-	fn try_writing_fd(filename: &str) -> Result<File, ExitCode> {
-		OpenOptions::new().read(true).write(true).create(true).truncate(false).open(filename).map_err(|e| {
-			runtime_error(format!("Can't open file `{filename}` for writing: {e}"))
+	fn try_writing_fd(name: &str) -> Result<File, ExitCode> {
+		OpenOptions::new().write(true).create(true).truncate(false).open(name).map_err(|e| {
+			runtime_error(format!("Can't open file '{name}' for writing: {e}"))
 		})
 	}
 
@@ -292,7 +292,7 @@ fn main() -> ExitCode {
 			}
 			Script(mut fd) => {
 				let mut script = Vec::new();
-				if let Err(c) = fd.read_to_end(&mut script).map_err(|e| {runtime_error(format!("Unable to read script file: {e}"))}) {return c;}
+				if let Err(c) = fd.read_to_end(&mut script).map_err(|e| {runtime_error(format!("Can't read from script file: {e}"))}) {return c;}
 				let start = Utf8Iter::from(script);
 
 				let res = interpreter(&mut st, start, &io, ll, None, strict);
@@ -305,16 +305,15 @@ fn main() -> ExitCode {
 				}
 			}
 			Save(mut fd) => {
-				let map = |e: std::io::Error| {runtime_error(format!("Unable to write state file: {e}"))};
+				let map = |e: std::io::Error| {runtime_error(format!("Can't write to state file: {e}"))};
 				if let Err(c) = fd.set_len(0).map_err(map) {return c;}
 				if let Err(c) = fd.rewind().map_err(map) {return c;}
-				if let Err(c) = fd.write_all(&STATE_FILE_HEADER).map_err(map) {return c;}
 				if let Err(c) = fd.write_all(st.to_string().as_bytes()).map_err(map) {return c;}
 			}
 			Load(mut fd) => {
 				//state files are just ADC scripts
 				let mut st_script = Vec::new();
-				if let Err(c) = fd.read_to_end(&mut st_script).map_err(|e| {runtime_error(format!("Unable to read state file: {e}"))}) {return c;}
+				if let Err(c) = fd.read_to_end(&mut st_script).map_err(|e| {runtime_error(format!("Can't read from state file: {e}"))}) {return c;}
 				if !st_script.starts_with(&STATE_FILE_HEADER) {return runtime_error("Invalid state file".into());}
 				let start = Utf8Iter::from(st_script);
 

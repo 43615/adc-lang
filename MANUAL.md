@@ -117,8 +117,10 @@ Numbers can be entered and printed in any base (radix) starting at 2. The format
 
 Format specifics:
 - Since `-` (minus/hyphen) is an arithmetic function, the character `` ` `` (grave/backtick) is used as the negative sign.
-- Fractional digits start with `.` (period). For values |x|<1, the leading 0 may be omitted. Recurring digits begin with the same `` ` `` character (at any point after the `.`) and continue until the number ends. For example, 1/700 can be entered as `` 0.00`142857 ``.
+- Fractional digits start with `.` (period). Recurring digits begin with the same `` ` `` character (at any point after the `.`) and continue until the number ends. For example, 71/700 can be entered as `` 0.10`142857 ``.
+  - For values |x|<1, the leading 0 may be omitted.
 - Scientific/exponential notation uses `@` (at sign) instead of the more conventional e/E. The exponent values themselves are always interpreted as decimal, but applied to the current input base. Negative exponents also use `` ` ``.
+  - If a number starts with `@` (no mantissa), a 1 is implied.
 - Bases above 10 use letters for digits after 9. To include letters in a number, it must be prefixed by `'` (apostrophe). Example with input base 16: `'dEaD.bEeF` = 57005.7458343505859375.
 - Bases above 36 use a special `'enclosed'` format. Numbers are represented as a space-separated series of digits, which are in decimal themselves. Negatives, fractionals and exponents work identically. Example with input base 100: `` '`12 3.45 0 67@`8' `` = -1203.450067 * 100^-8.
   - Plain numbers without apostrophes are also accepted, and interpreted as decimal.
@@ -262,7 +264,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `q` quits the ADC interpreter. If the [register pointer](#registers) is set, the lowest byte of its integer part is returned as the exit code.
   - `` `q `` is a "hard" quit, which may be handled differently.
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
-- `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on.
+- `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
 - `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving them unchanged. Use after large operations.
 - `_clall` clears the entire current state.
 
@@ -270,14 +272,14 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 ## OS commands
 
 There are some commands that interact with the OS running the interpreter. To protect against untrusted input, these may be disabled with "restricted mode" (**CLI:** `-r` flag), the `_restrict` command (one-way), or by building the crate with the `no_os` feature enabled.
-- `_sysarch -> Sz` returns the CPU architecture of the running system.
-- `_sysfamily -> Sz` returns the OS family of the running system.
-- `_sysos -> Sz` returns the OS name of the running system.
+- `_osarch -> Sz` returns the [CPU architecture](https://doc.rust-lang.org/std/env/consts/constant.ARCH.html) of the running system.
+- `_osfamily -> Sz` returns the [OS family](https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html) of the running system.
+- `_osname -> Sz` returns the [OS name](https://doc.rust-lang.org/std/env/consts/constant.OS.html) of the running system.
 - `Sa _save` saves the current state to a file specified by a path in *a*. State files are just ADC scripts that follow a special format.
 - `Sa _load` loads state file *a* if it's valid, overwriting the current state.
 - `Sa Sb _write` writes *a* to file *b*, creating/overwriting it if necessary.
-- `Sa Sb _append` appends *a* at the end of file *b*, creating it if necessary.
-- `Sa _read -> Sz` reads file *a* into a string.
+- `Sa Sb _append` appends *a* to the end of file *b*, creating it if necessary.
+- `Sa _read -> Sz` reads file *a* into a string, erroring if it doesn't exist.
 - TODO
 
 
@@ -299,5 +301,5 @@ If an error occurs, no action is performed. For value errors, this means that th
 
 To enable dynamic error handling and reformatting, there is an "error latch" mechanism:
 - When an error occurs, the offending command is saved and a counter is set to 0. Every command parsed after that will increment the counter, until the error is cleared or overwritten by a new one. This functionality does not depend on the error display mode.
-- `_err -> (NPx SCy Sz)` reads and clears the error. *x* indicates how many commands ago the (most recent) error happened, *y* is the offending command (NUL for unparseable macros), and *z* is the error message (without the `!`/`?` prefix or thread name).
+- `_err -> (NPx SCy Sz)` reads and clears the error. *x* indicates how many commands ago the (most recent) error happened, *y* is the offending command (NUL for unparseable macros), and *z* is the error message (without the `!`/`?` prefix or thread name). Returns `()` if the error latch was empty.
 - This also persists for one interpreter instance.

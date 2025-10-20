@@ -11,6 +11,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
 use std::thread as th;
 use const_format::concatcp;
+use crate::STATE_FILE_HEADER;
 
 #[derive(Debug)]
 pub enum Value {
@@ -269,7 +270,12 @@ impl TryFrom<Utf8Iter<'_>> for String {
 	fn try_from(mut value: Utf8Iter) -> Result<String, String> {
 		let mut res = String::new();
 		while !value.is_finished() {
-			res.push(value.try_next_char()?);
+			res.push(value.try_next_char().map_err(|e| format!("At byte {}: {e}", {
+				match value {
+					Utf8Iter::Borrowed {pos, ..} => pos,
+					Utf8Iter::Owned {pos, ..} => pos
+				}
+			}))?);
 		}
 		Ok(res)
 	}
@@ -442,7 +448,7 @@ impl Utf8Iter<'_> {
 
 /// Number output mode
 #[derive(Clone, Debug, Copy)]
-#[repr(u8)] pub enum NumOutMode { Auto, Norm, Sci, Frac }
+#[repr(u8)] pub enum NumOutMode { Auto=0, Norm=1, Sci=2, Frac=3 }
 
 /// Parameter context tuple: (K, I, O, M)
 pub type Params = (usize, Natural, Natural, NumOutMode);
@@ -470,6 +476,11 @@ impl ParamStk {
 	/// Discards all contexts, creates default
 	pub fn clear(&mut self) {
 		*self = Self::default();
+	}
+
+	/// Refers to the underlying [`Vec`] for manual access
+	pub fn inner(&self) -> &Vec<Params> {
+		&self.0
 	}
 
 	/// Extracts the underlying [`Vec`] for manual access
@@ -510,8 +521,13 @@ impl ParamStk {
 	}
 
 	/// Set number output mode
-	pub fn set_m(&mut self, m: NumOutMode) {
-		unsafe { self.0.last_mut().unwrap_unchecked().3 = m; }
+	pub fn try_set_m(&mut self, r: &Rational) -> Result<(), &'static str> {
+		if let Ok(u) = u8::try_from(r) && u<=3 {
+			unsafe { self.0.last_mut().unwrap_unchecked().3 = std::mem::transmute(u); }
+			Ok(())
+		}
+		else {Err("Output mode must be 0|1|2|3")}
+		
 	}
 
 	/// Current output precision
@@ -559,7 +575,27 @@ pub struct State {
 /// Export to state file with standard format
 impl Display for State {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		todo!()
+		write!(f, "{}", String::from_utf8_lossy(&STATE_FILE_HEADER))?;
+		for (lri, lreg) in self.regs.low.iter().enumerate() {
+			for val in &lreg.v {
+				writeln!(f, "{val}")?;
+			}
+			writeln!(f, "{lri}:ff")?;
+		}
+		for (hri, hreg) in &self.regs.high {
+			for val in &hreg.v {
+				writeln!(f, "{val}")?;
+			}
+			writeln!(f, "{}:ff", crate::num::nauto(hri, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2))?;
+		}
+		for val in &self.mstk {
+			writeln!(f, "{val}")?;
+		}
+		write!(f, "{}", {
+			let v: Vec<String> = self.params.inner().iter().map(|par| format!("{}k{}i{}o{}m", par.0, par.1, par.2, par.3 as u8)).collect();
+			v.join("{")
+		})?;
+		Ok(())
 	}
 }
 impl State {
