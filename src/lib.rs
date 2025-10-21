@@ -24,11 +24,14 @@ use std::ptr::NonNull;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread as th;
+use bitvec::prelude::*;
 use malachite::{Integer, Natural, Rational};
+use malachite::base::num::arithmetic::traits::{NegAssign, Pow};
 use malachite::base::num::random::RandomPrimitiveInts;
 use malachite::natural::random::get_random_natural_less_than;
 use malachite::base::num::basic::traits::{NegativeOne, One, Zero};
 use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
+use malachite::base::rational_sequences::RationalSequence;
 use malachite::base::rounding_modes::RoundingMode;
 
 /// Added at the start of saved state files
@@ -56,25 +59,25 @@ impl Default for LineEditor {
 
 /// Generic input stream adapter trait, used for adding a proper line editor.
 ///
-/// Comes with a generic implementation for all [`BufRead`] types, `prompt` does nothing in that case.
+/// Comes with a generic implementation for all [`BufRead`] types.
 pub trait ReadLine {
-	/// Display `prompt` if possible and read one line of input. The definition of "line" is not strict.
-	/// 
-	/// This is typically called once by every execution of the `?` command within ADC.
+	/// This is called once by every execution of the `?` command within ADC.
 	///
 	/// [`ErrorKind::Interrupted`] causes `?` to error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
-	fn read_line(&mut self, prompt: &str) -> std::io::Result<String>;
+	fn read_line(&mut self) -> std::io::Result<String>;
+
+
 }
 impl<T: BufRead> ReadLine for T {
-	fn read_line(&mut self, _prompt: &str) -> std::io::Result<String> {
+	fn read_line(&mut self) -> std::io::Result<String> {
 		let mut buf = String::new();
 		self.read_line(&mut buf)?;
 		Ok(buf)
 	}
 }
 impl ReadLine for LineEditor {
-	fn read_line(&mut self, prompt: &str) -> std::io::Result<String> {
-		self.0.readline(prompt).map_err(|re| {
+	fn read_line(&mut self) -> std::io::Result<String> {
+		self.0.readline("").map_err(|re| {
 			use rustyline::error::{ReadlineError::*, Signal};
 			use std::io::Error;
 			match re {
@@ -111,7 +114,7 @@ impl IOStreams {
 	/// Use IO streams of the process (stdin, stdout, stderr), with extra line editor on stdin
 	pub fn process() -> Self {
 		Self (
-			Box::new(LineEditor::default()),
+			Box::new(std::io::BufReader::new(std::io::stdin())),
 			Box::new(std::io::stdout()),
 			Box::new(std::io::stderr())
 		)
@@ -186,22 +189,22 @@ const CMDS: [Command; 256] = {
 		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,
 
 		//SP		!			"			#			$			%			&			'			(			)			*			+			,			-			.			/
-		Space,		Fn1(neg),	Wrong,		Space,		Wrong,		Fn2(r#mod),	Wrong,		Lit,		Special,	Special,	Fn2(mul),	Fn2(add),	Wrong,		Fn2(sub),	Lit,		Fn2(div),
+		Space,		Fn1(neg),	Special,	Space,		Wrong,		Fn2(r#mod),	Wrong,		Lit,		Special,	Special,	Fn2(mul),	Fn2(add),	Wrong,		Fn2(sub),	Lit,		Fn2(div),
 
 		//0			1			2			3			4			5			6			7			8			9			:			;			<			=			>			?
 		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Special,	Wrong,		Wrong,		Wrong,		Wrong,		Special,
 
 		//@			A			B			C			D			E			F			G			H			I			J			K			L			M			N			O
-		Lit,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	Wrong,		Cmd(gk),	Wrong,		Cmd(gm),	Wrong,		Cmd(go),
+		Lit,		Wrong,		Wrong,		Cmd(cln),	Special,	Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	Wrong,		Cmd(gk),	Wrong,		Cmd(gm),	Wrong,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
-		Special,	Special,	Wrong,		Wrong,		Lit,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Wrong,		Lit,		Special,	Wrong,		Fn2(pow),	Special,
+		Special,	Special,	Special,	Wrong,		Lit,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Wrong,		Lit,		Wrong,		Wrong,		Fn2(pow),	Special,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
-		Special,	Special,	Wrong,		Wrong,		Wrong,		Wrong,		Special,	Fn1(log),	Wrong,		Cmd(si),	Wrong,		Cmd(sk),	Wrong,		Cmd(sm),	Wrong,		Cmd(so),
+		Special,	Special,	Wrong,		Cmd(cls),	Special,	Wrong,		Special,	Fn1(log),	Wrong,		Cmd(si),	Wrong,		Cmd(sk),	Wrong,		Cmd(sm),	Wrong,		Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Special,	Special,	Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
+		Special,	Special,	Cmd(rev),	Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
 
 		//~~description of what i'm doing:~~ non-ASCII:
 		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
@@ -226,6 +229,23 @@ fn string_or_bytes(v: &[u8]) -> String {
 		res += "])";
 		res
 	})
+}
+
+fn upper_hex_to_nibble(b: u8) -> Option<u8> {
+	match b {
+		b'0'..=b'9' => Some(unsafe{b.unchecked_sub(0x30)}),	//SAFETY: underflow is impossible
+		b'A'..=b'F' => Some(unsafe{b.unchecked_sub(0x37)}),
+		_ => None
+	}
+}
+
+fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
+	match b {
+		b'0'..=b'9' => Some(unsafe{b.unchecked_sub(0x30)}),	//SAFETY: underflow is impossible
+		b'A'..=b'Z' => Some(unsafe{b.unchecked_sub(0x37)}),
+		b'a'..=b'z' => Some(unsafe{b.unchecked_sub(0x57)}),
+		_ => None
+	}
 }
 
 /// Results of running [`interpreter`], wrappers should handle these differently
@@ -271,65 +291,20 @@ pub enum ExecResult {
 {
 	use ExecResult::*;
 
-	let th_name = th::current().name().unwrap_or_default().to_owned();
+	let th_name: String = match th::current().name() {
+		Some("main") | None => "".into(),
+		Some(s) => s.into()
+	};
 
 	let mut pbuf: Option<String> = None;	//print-to-string buffer
 
 	let mut elatch: Option<(Natural, char, String)> = None;
 
-	macro_rules! out {
-    	($s:expr) => {
-			if let Some(s) = &mut pbuf {
-				s.push_str($s);
-			}
-			else {
-				let out = &mut io.lock().unwrap().1;
-				write!(out, "{}", $s)?;
-				out.flush()?;
-			}
-		};
-		($f:literal, $($s:expr),*) => {
-			if let Some(s) = &mut pbuf {
-				s.push_str(&format!($f, $($s),*));
-			}
-			else {
-				let out = &mut io.lock().unwrap().1;
-				write!(out, "{}", format!($f, $($s),*))?;
-				out.flush()?;
-			}
-		};
-	}
-
-	macro_rules! outln {
-    	($s:expr) => {
-			if let Some(s) = &mut pbuf {
-				s.push_str($s);
-				s.push('\n');
-			}
-			else {
-				let out = &mut io.lock().unwrap().1;
-				writeln!(out, "{}", $s)?;
-				out.flush()?;
-			}
-		};
-		($f:literal, $($s:expr),*) => {
-			if let Some(s) = &mut pbuf {
-				s.push_str(&format!($f, $($s),*));
-				s.push('\n');
-			}
-			else {
-				let out = &mut io.lock().unwrap().1;
-				writeln!(out, "{}", format!($f, $($s),*))?;
-				out.flush()?;
-			}
-		};
-	}
-
 	macro_rules! synerr {
 		($c:expr, $s:expr) => {
 			if ll != LogLevel::Quiet {
 				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "! {th_name}{}", $s)?;
+				writeln!(err, "! {th_name}{}: {}", $c, $s)?;
 				err.flush()?;
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
@@ -338,7 +313,7 @@ pub enum ExecResult {
 			let s = format!($f, $($s),*);
 			if ll != LogLevel::Quiet {
 				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "! {th_name}{}", s)?;
+				writeln!(err, "! {th_name}{}: {}", $c, s)?;
 				err.flush()?;
 			}
 			elatch = Some((Natural::ZERO, $c, s));
@@ -349,7 +324,7 @@ pub enum ExecResult {
     	($c:expr, $s:expr) => {
 			if ll != LogLevel::Quiet {
 				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "? {th_name}: {}", $s)?;
+				writeln!(err, "? {th_name}{}: {}", $c, $s)?;
 				err.flush()?;
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
@@ -358,7 +333,7 @@ pub enum ExecResult {
 			let s = format!($f, $($s),*);
 			if ll != LogLevel::Quiet {
 				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "? {th_name}: {}", s)?;
+				writeln!(err, "? {th_name}{}: {}", $c, s)?;
 				err.flush()?;
 			}
 			elatch = Some((Natural::ZERO, $c, s));
@@ -391,6 +366,7 @@ pub enum ExecResult {
 	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::const_from(1))];
 
 	'mac: while let Some((mac, count)) = call.last_mut() {	//while call stack has contents, macro scope:
+		*count -= Natural::ONE;
 		let mut alt = false;
 
 		let mut abuf: Vec<Value> = Vec::new();	//array input buffer
@@ -559,32 +535,95 @@ pub enum ExecResult {
 							alt = true;
 							continue 'cmd;	//force digraph
 						},
-						b'?' => {	//read line
-							let prompt = if alt {
-								if let Some(va) = st.mstk.pop() {
-									match &*va {
-										Value::S(s) => {
-											s.clone()
-										},
-										_ => {
-											let t = errors::TypeLabel::from(&*va);
+						b'd' => {
+							if let Some(v) = st.mstk.last() {
+								if let Some(p) = dest.last_mut() {
+									unsafe {
+										p.as_mut().push((**v).clone());	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
+									}
+								}
+								else {
+									st.mstk.push(Arc::clone(v));
+								}
+							}
+							else {
+								synerr!('d', "Command 'd': Stack is empty");
+							}
+						},
+						b'D' => {
+							if let Some(va) = st.mstk.pop() {
+								if let Value::N(r) = &*va {
+									match usize::try_from(r) {
+										Ok(0) => {},	//no-op
+										Ok(u) => {
+											if let Some(from) = st.mstk.len().checked_sub(u) {
+												if let Some(p) = dest.last_mut() {
+													for v in &st.mstk[from..] {
+														unsafe {
+															p.as_mut().push((**v).clone());	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
+														}
+													}
+												}
+												else {
+													st.mstk.extend_from_within(from..);
+												}
+											}
+											else {
+												st.mstk.push(va);
+												valerr!('D', "Command 'D': Can't duplicate {} values, stack depth is {}", u, st.mstk.len());
+											}
+										}
+										Err(_) => {
+											let vs = va.to_string();
 											st.mstk.push(va);
-											synerr!('Q', "Command '`?' needs a string, {} given", t);
-											alt = false;
-											continue 'cmd;
+											valerr!('D', "Command 'D': Can't possibly duplicate {} values", vs);
 										}
 									}
 								}
 								else {
-									synerr!('?', "Command '`?' needs 1 argument, 0 given");
-									alt = false;
-									continue 'cmd;
+									let ta = errors::TypeLabel::from(&*va);
+									st.mstk.push(va);
+									synerr!('D', "Command 'D' needs a number, {} given", ta);
 								}
 							}
 							else {
-								String::new()
-							};
-							match io.lock().unwrap().0.read_line(&prompt) {
+								synerr!('D', "Command 'D' needs 1 argument, 0 given");
+							}
+						},
+						b'R' => {	//rotate
+							if let Some(va) = st.mstk.pop() {
+								if let Value::N(r) = &*va {
+									match usize::try_from(r) {
+										Ok(0) => {},	//no-op
+										Ok(u) => {
+											if let Some(slice) = st.mstk.rchunks_exact_mut(u).next() {
+												if alt {slice.rotate_left(1);}
+												else {slice.rotate_right(1);}
+											}
+											else {
+												st.mstk.push(va);
+												valerr!('R', "Command 'R': Can't rotate {} values, stack depth is {}", u, st.mstk.len());
+											}
+										}
+										Err(_) => {
+											let vs = va.to_string();
+											st.mstk.push(va);
+											valerr!('R', "Command 'R': Can't possibly rotate {} values", vs);
+										}
+									}
+								}
+								else {
+									let ta = errors::TypeLabel::from(&*va);
+									st.mstk.push(va);
+									synerr!('R', "Command 'R' needs a number, {} given", ta);
+								}
+							}
+							else {
+								synerr!('R', "Command 'R' needs 1 argument, 0 given");
+							}
+						},
+						b'?' => {	//read line
+							match io.lock().unwrap().0.read_line() {
 								Ok(s) => {
 									push!(Value::S(s));
 								},
@@ -603,36 +642,37 @@ pub enum ExecResult {
 								}
 							}
 						},
-						b'p' => {	//print top
-							match (st.mstk.last(), alt) {
-								(Some(va), false) => {
-									outln!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
+						b'p' => {	//println top
+							if let Some(va) = st.mstk.pop() {
+								let vs = va.display(st.params.get_k(), st.params.get_o(), st.params.get_m(), alt);
+								if let Some(s) = &mut pbuf {
+									s.push_str(&vs);
+									s.push('\n');
 								}
-								(Some(va), true) => {
-									out!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
-								}
-								(None, false) => {
-									synerr!('p', "Command 'p': Stack is empty");
-								},
-								(None, true) => {
-									synerr!('p', "Command '`p': Stack is empty");
+								else {
+									let out = &mut io.lock().unwrap().1;
+									writeln!(out, "{}", vs)?;
+									out.flush()?;
 								}
 							}
+							else {
+								synerr!('p', "Command 'p' needs 1 argument, 0 given");
+							}
 						},
-						b'P' => {	//pop and print top
-							match (st.mstk.pop(), alt) {
-								(Some(va), false) => {
-									outln!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
+						b'P' => {	//print top
+							if let Some(va) = st.mstk.pop() {
+								let vs = va.display(st.params.get_k(), st.params.get_o(), st.params.get_m(), alt);
+								if let Some(s) = &mut pbuf {
+									s.push_str(&vs);
 								}
-								(Some(va), true) => {
-									out!(&va.display(st.params.get_k(), st.params.get_o(), st.params.get_m()));
+								else {
+									let out = &mut io.lock().unwrap().1;
+									write!(out, "{}", vs)?;
+									out.flush()?;
 								}
-								(None, false) => {
-									synerr!('P', "Command 'P' needs 1 argument, 0 given");
-								},
-								(None, true) => {
-									synerr!('P', "Command '`P' needs 1 argument, 0 given");
-								}
+							}
+							else {
+								synerr!('P', "Command 'P' needs 1 argument, 0 given");
 							}
 						},
 						b'"' => {	//toggle pbuf
@@ -705,7 +745,11 @@ pub enum ExecResult {
 						b'a' => {	//array commands
 							match mac.next() {
 								Some(b) if !matches!(byte_cmd(b), Space) => {
-									todo!()
+									match b {
+										_ => {
+											synerr!('a', "Invalid array command: 'a{}'", b as char);
+										}
+									}
 								},
 								Some(_) | None => {
 									synerr!('a', "Incomplete array command: 'a'");
@@ -715,7 +759,84 @@ pub enum ExecResult {
 						b'f' => {	//stack commands
 							match mac.next() {
 								Some(b) if !matches!(byte_cmd(b), Space) => {
-									todo!()
+									match b {
+										b'z' => {	//stack depth
+											push!(Value::N(st.mstk.len().into()));
+										},
+										b'r' => {	//reverse stack
+											st.mstk.reverse();
+										},
+										b'R' => {	//reverse part of stack
+											if let Some(va) = st.mstk.pop() {
+												if let Value::N(r) = &*va {
+													match usize::try_from(r) {
+														Ok(0) => {},	//no-op
+														Ok(u) => {
+															if let Some(slice) = st.mstk.rchunks_exact_mut(u).next() {
+																slice.reverse();
+															}
+															else {
+																st.mstk.push(va);
+																valerr!('f', "Command 'fR': Can't reverse {} values, stack depth is {}", u, st.mstk.len());
+															}
+														}
+														Err(_) => {
+															let vs = va.to_string();
+															st.mstk.push(va);
+															valerr!('f', "Command 'fR': Can't possibly reverse {} values", vs);
+														}
+													}
+												}
+												else {
+													let ta = errors::TypeLabel::from(&*va);
+													st.mstk.push(va);
+													synerr!('f', "Command 'fR' needs a number, {} given", ta);
+												}
+											}
+											else {
+												synerr!('f', "Command 'fR' needs 1 argument, 0 given");
+											}
+										},
+										b'f' => {	//swap with reg
+											let ri = if let Some(r) = rptr.take() {r}
+											else {
+												if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
+													synerr!(b as char, "Command 'ff' needs a register index");
+													alt = false;
+													continue 'cmd;
+												}
+												Rational::from(
+													match mac.try_next_char() {
+														Ok(c) => {c as u32},
+														Err(e) => {
+															*count = Natural::ZERO;
+															synerr!('\0', "Aborting invalid macro: {}", e);
+															break 'cmd;
+														}
+													}
+												)
+											};
+											let reg = st.regs.get_mut(&ri);
+											std::mem::swap(&mut st.mstk, &mut reg.v);
+										},
+										b'p' => {	//print stack
+											for v in &st.mstk {
+												let vs = v.display(st.params.get_k(), st.params.get_o(), st.params.get_m(), alt);
+												if let Some(s) = &mut pbuf {
+													s.push_str(&vs);
+													s.push('\n');
+												}
+												else {
+													let out = &mut io.lock().unwrap().1;
+													writeln!(out, "{}", vs)?;
+													out.flush()?;
+												}
+											}
+										},
+										_ => {
+											synerr!('f', "Invalid stack command: 'f{}'", b as char);
+										}
+									}
 								},
 								Some(_) | None => {
 									synerr!('f', "Incomplete stack command: 'f'");
@@ -863,13 +984,235 @@ pub enum ExecResult {
 				Lit => {
 					match b {
 						b'T' | b'F' => {	//booleans
-							
+							let mut bits = BitVec::new();
+							bits.push(b == b'T');
+							while let Some(b) = mac.next() {
+								match b {
+									b'T' => {bits.push(true);},
+									b'F' => {bits.push(false);},
+									_ => {
+										mac.back();
+										break;
+									}
+								}
+							}
+							push!(Value::B(bits));
 						},
 						b'\'' | b'0'..=b'9' | b'.' | b'@' => {	//numbers
+							mac.back();
 
+							let mut ipart = Vec::new();
+							let mut fpart = Vec::new();
+							let mut rpart = Vec::new();
+							let mut discard = false;
+							let mut ibase = st.params.get_i().clone();
+
+							match (b == b'\'', ibase > Natural::const_from(36)) {
+								(false, high_base) => {	//plain
+									ibase = if high_base {Natural::const_from(10)} else {ibase};	//if plain but I>36, interpret mantissa with I=10
+									while let Some(ib) = mac.next() {	//integer part
+										let id = ib.wrapping_sub(0x30);
+										match id {
+											0..=9 if id < ibase => {ipart.push(Natural::from(id));},
+											0..=9 => {
+												synerr!('\'', "Digit {} is too high for base {}", id, ibase);
+												discard = true;
+											},
+											_ => {
+												mac.back();
+												break;
+											}
+										}
+									}
+									match mac.next() {
+										Some(b'.') => {	//fractional part
+											let mut recur = false;	//recurring digits started
+											while let Some(fb) = mac.next() {
+												let fd = fb.wrapping_sub(0x30);
+												match fd {
+													0x30 if !recur => {recur = true;},	//b'`' == 0x60
+													0..=9 if !recur && fd < ibase => {fpart.push(Natural::from(fd));},
+													0..=9 if recur && fd < ibase => {rpart.push(Natural::from(fd));},
+													0..=9 => {
+														synerr!('\'', "Digit {} is too high for base {}", fd, ibase);
+														discard = true;
+													},
+													_ => {
+														mac.back();
+														break;
+													}
+												}
+											}
+										},
+										Some(_) => {mac.back();},
+										None => {}
+									}
+								}
+								(true, false) => {	//prefixed
+									while let Some(ib) = mac.next() {	//integer part
+										if let Some(id) = mixed_ascii_to_digit(ib) {
+											if id < ibase {ipart.push(Natural::from(id));}
+											else {
+												synerr!('\'', "Digit {} is too high for base {}", id, ibase);
+												discard = true;
+											}
+										}
+										else {
+											mac.back();
+											break;
+										}
+									}
+									match mac.next() {
+										Some(b'.') => {	//fractional part
+											let mut recur = false;	//recurring digits started
+											while let Some(fb) = mac.next() {
+												if let Some(fd) = mixed_ascii_to_digit(fb) {
+													if fd < ibase {
+														if !recur {fpart.push(Natural::from(fd));}
+														else {rpart.push(Natural::from(fd));}
+													}
+													else {
+														synerr!('\'', "Digit {} is too high for base {}", fd, ibase);
+														discard = true;
+													}
+												}
+												else if !recur && fb == b'`' {recur = true;}
+												else {
+													mac.back();
+													break;
+												}
+											}
+										},
+										Some(_) => {mac.back();},
+										None => {}
+									}
+								},
+								(true, true) => {	//enclosed
+									todo!()
+								}
+							}
+
+							ipart.reverse();	//malachite needs reverse order
+							let mut r = Rational::from_digits(&ibase, ipart, RationalSequence::from_vecs(fpart, rpart));
+							if alt {r.neg_assign();}	//negative sign was already set
+
+							match mac.next() {
+								Some(b'@') => {	//exponent part
+									let mut es = String::new();
+									let mut eneg = false;	//negative sign occurred
+									while let Some(eb) = mac.next() {
+										match eb {
+											b'`' if !eneg => {es.push('-');},
+											b'0'..=b'9' => {es.push(eb as char);},
+											_ => {
+												mac.back();
+												break;
+											}
+										}
+										eneg = true;	//only allow on first char
+									}
+									if es.is_empty() {es.push('0');}
+									if r == Rational::ZERO {r = Rational::ONE;}	//only exponent part
+									if let Ok(exp) = es.parse::<i64>() {
+										r *= Rational::from(st.params.get_i()).pow(exp);	//get original ibase
+									}
+									else {
+										valerr!('\'', "Exponent {} is unrepresentable", es);
+										discard = true;
+									}
+								},
+								Some(_) => {mac.back();},
+								None => {}
+							}
+
+							if !discard {
+								push!(Value::N(r));
+							}
 						},
 						b'[' => {	//strings
-
+							let mut bytes = Vec::new();
+							let mut discard = false;
+							let mut nest = 1usize;
+							while let Some(b) = mac.next() {
+								match b {
+									b'[' => {
+										nest = unsafe { nest.unchecked_add(1) };
+										bytes.push(b'[');
+									},
+									b']' => {
+										nest = unsafe { nest.unchecked_sub(1) };
+										if nest == 0 {
+											break;
+										}
+										else {
+											bytes.push(b']');
+										}
+									},
+									b'\\' => {	//character escapes
+										match mac.next() {
+											Some(b'a') => {bytes.push(0x07);},		//bell
+											Some(b'b') => {bytes.push(0x08);},		//backspace
+											Some(b't') => {bytes.push(0x09);},		//horizontal tab
+											Some(b'n') => {bytes.push(0x0A);},		//line feed
+											Some(b'v') => {bytes.push(0x0B);},		//vertical tab
+											Some(b'f') => {bytes.push(0x0C);},		//form feed
+											Some(b'r') => {bytes.push(0x0D);},		//carriage return
+											Some(b'e') => {bytes.push(0x1B);},		//escape
+											Some(b'[') => {bytes.push(b'[');},		//literal opening bracket
+											Some(b']') => {bytes.push(b']');},		//literal closing bracket
+											Some(b'\\') => {bytes.push(b'\\');},	//literal backslash
+											Some(b0) => {							//other escapes
+												if let Some(high) = upper_hex_to_nibble(b0) {	//byte literal
+													if let Some(b1) = mac.next() {
+														if let Some(low) = upper_hex_to_nibble(b1) {
+															bytes.push(high << 4 | low);
+														}
+														else {
+															synerr!('[', "Invalid byte escape: \\{}{}", b0 as char, b1 as char);
+															discard = true;
+														}
+													}
+													else {
+														synerr!('[', "Incomplete byte escape: \\{}", b0 as char);
+														discard = true;
+													}
+												}
+												else {	//wrong escape
+													mac.back();
+													match mac.try_next_char() {
+														Ok(c) => {
+															synerr!('[', "Invalid character escape: \\{} (U+{:04X})", c, c as u32);
+															discard = true;
+														},
+														Err(e) => {
+															*count = Natural::ZERO;
+															synerr!('\0', "Aborting invalid macro: {}", e);
+															break 'cmd;
+														}
+													}
+												}
+											},
+											None => {
+												synerr!('[', "Incomplete character escape: \\");
+												discard = true;
+											}
+										}
+									},
+									_ => {
+										bytes.push(b);
+									}
+								}
+							}
+							if !discard {
+								match String::try_from(Utf8Iter::from(bytes)) {
+									Ok(s) => {
+										push!(Value::S(s));
+									},
+									Err(e) => {
+										synerr!('[', "Invalid string: {}", e);
+									}
+								}
+							}
 						},
 						_ => unreachable!()
 					}
@@ -906,7 +1249,6 @@ pub enum ExecResult {
 			call.pop();
 		}
 		else {	//more to go
-			*count -= Natural::ONE;
 			mac.rewind();
 		}
 	}	//end of macro scope

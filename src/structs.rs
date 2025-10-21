@@ -15,7 +15,7 @@ use crate::STATE_FILE_HEADER;
 
 #[derive(Debug)]
 pub enum Value {
-	B(BitVec),
+	B(BitVec<usize, Lsb0>),
 	N(Rational),
 	S(String),
 	A(Vec<Value>)
@@ -63,8 +63,8 @@ impl Clone for Value {
 }
 
 impl Value {
-	/// Prints scalar values, passing `A` is undefined behavior.
-	unsafe fn display_scalar(&self, k: usize, o: &Natural, nm: NumOutMode) -> String {
+	/// Prints scalar values, passing `A` is undefined behavior. `sb` prints brackets around strings.
+	unsafe fn display_scalar(&self, k: usize, o: &Natural, nm: NumOutMode, sb: bool) -> String {
 		use Value::*;
 		match self {
 			B(b) => {
@@ -91,7 +91,12 @@ impl Value {
 				}
 			},
 			S(s) => {
-				String::from("[") + s + "]"
+				if sb {
+					String::from("[") + s + "]"
+				}
+				else {
+					s.to_owned()
+				}
 			},
 			A(_) => {
 				unsafe { std::hint::unreachable_unchecked() }
@@ -99,8 +104,8 @@ impl Value {
 		}
 	}
 	
-	/// Prints the value, heap DFS to avoid overflowing the stack.
-	pub fn display(&self, k: usize, o: &Natural, nm: NumOutMode) -> String {
+	/// Prints the value, heap DFS to avoid overflowing the stack. `sb` prints brackets around strings.
+	pub fn display(&self, k: usize, o: &Natural, nm: NumOutMode, sb: bool) -> String {
 		use Value::*;
 		match self {
 			A(a) => {	//the fun part
@@ -114,7 +119,7 @@ impl Value {
 								stk.push(aa.iter());	//"recursive call"
 							},
 							_ => {	//scalar encountered
-								let s = unsafe { val.display_scalar(k, o, nm) };
+								let s = unsafe { val.display_scalar(k, o, nm, sb) };
 								res += &s;	//append it
 								res.push(' ');
 							}
@@ -131,16 +136,16 @@ impl Value {
 				res
 			},
 			_ => {	//just display scalar
-				unsafe { self.display_scalar(k, o, nm) }
+				unsafe { self.display_scalar(k, o, nm, sb) }
 			}
 		}
 	}
 }
 
-/// Default printing function, `N` uses default parameters.
+/// Canonical printing function, with default parameters for `N` and brackets for `S`.
 impl Display for Value {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}", self.display(DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2, DEFAULT_PARAMS.3))
+		write!(f, "{}", self.display(DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2, DEFAULT_PARAMS.3, true))
 	}
 }
 
@@ -448,8 +453,8 @@ impl Utf8Iter<'_> {
 }
 
 /// Number output mode
-#[derive(Clone, Debug, Copy)]
-#[repr(u8)] pub enum NumOutMode { Auto=0, Norm=1, Sci=2, Frac=3 }
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)] pub enum NumOutMode { #[default] Auto=0, Norm=1, Sci=2, Frac=3 }
 
 /// Parameter context tuple: (K, I, O, M)
 pub type Params = (usize, Natural, Natural, NumOutMode);
@@ -593,7 +598,14 @@ impl Display for State {
 			writeln!(f, "{val}")?;
 		}
 		write!(f, "{}", {
-			let v: Vec<String> = self.params.inner().iter().map(|par| format!("{}k{}i{}o{}m", par.0, par.1, par.2, par.3 as u8)).collect();
+			let v: Vec<String> = self.params.inner().iter().map(|par| {
+				let mut ps = String::new();
+				if par.0 != DEFAULT_PARAMS.0 {ps += &format!("{}k", par.0);}
+				if par.1 != DEFAULT_PARAMS.1 {ps += &format!("{}i", par.1);}
+				if par.2 != DEFAULT_PARAMS.2 {ps += &format!("{}o", par.2);}
+				if par.3 != DEFAULT_PARAMS.3 {ps += &format!("{}m", par.3 as u8);}
+				ps
+			}).collect();
 			v.join("{")
 		})?;
 		Ok(())

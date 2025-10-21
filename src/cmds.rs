@@ -122,3 +122,40 @@ cmd!(cbc, st {
 	st.params.destroy();
 	Ok(vec![])
 });
+
+cmd!(cls, st {
+	st.mstk.clear();
+	Ok(vec![])
+});
+
+cmd!(cln, st {
+	if let Some(va) = st.mstk.pop() {
+		if let Value::N(r) = &*va {
+			if let Ok(u) = usize::try_from(r) {
+				st.mstk.truncate(st.mstk.len().saturating_sub(u));
+				Ok(vec![])
+			}
+			else {
+				let vs = va.to_string();
+				st.mstk.push(va);
+				Err(format!("Can't possibly clear {} values", vs))
+			}
+		}
+		else {
+			let ta = TypeLabel::from(&*va);
+			st.mstk.push(va);
+			Err(format!("Expected number, {} given", ta))
+		}
+	}
+	else {
+		Err("Expected 1 argument, 0 given".into())
+	}
+});
+
+cmd!(rev, st {
+	let len = st.mstk.len();
+	if len >= 2 {
+		st.mstk.swap(len - 1, len - 2);
+	}	//else no-op
+	Ok(vec![])
+});

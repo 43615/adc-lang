@@ -372,7 +372,7 @@ tri!(bar
 );
 
 mon!(disc
-	B(_), _ => Ok(N(Rational::const_from_signed(-1))),
-	N(_), _ => Ok(N(Rational::const_from_signed(-2))),
-	S(_), _ => Ok(N(Rational::const_from_signed(-3)))
+	B(_), _ => Ok(N(Rational::const_from_unsigned(1))),
+	N(_), _ => Ok(N(Rational::const_from_unsigned(2))),
+	S(_), _ => Ok(N(Rational::const_from_unsigned(3)))
 );

@@ -188,12 +188,11 @@ Since nesting is required for any complex program, string input uses `[square br
 
 The interpreter is connected to a standard set of I/O streams: Input, output, and error. The error stream works automatically, see [below](#errors).
 - `? -> Sz` reads one line of input into a string.
-  - `` Sa `? -> Sz `` additionally displays *a* as a prompt. Displaying prompts is implemented in this crate, but might not be in other IO wrappers.
-- `p` prints the top-of-stack value, leaving it unchanged.
-- `Xa P` pops and prints the top-of-stack.
-  - `` `p ``/`` Xa `P `` prints without a newline.
-- `fp`/`fP` prints the whole stack line-by-line, keeping/removing the contents. The top value is printed last, prefix `` ` `` to reverse.
-- `"` toggles string mode for these printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
+- `Xa p` pops and prints the top-of-stack value.
+- `Xa P` prints without a newline.
+- `fp` prints the whole stack line-by-line, keeping the contents. The top value is printed last.
+- For the above printing commands, prefixing `` ` `` will print `[brackets]` around strings.
+- `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
 - **CLI:** uses the IO streams of the process, input has an additional [line editor](https://crates.io/crates/rustyline) to enable shortcuts and history. The library may be attached to other streams using a generic interface.
 
 
@@ -220,7 +219,7 @@ TODO
 
 Registers are auxiliary stacks, identified by rational indices. Commands that operate on registers are annotated with `⒭`, meaning that the command either takes the next command character as a register index (Unicode character value) or uses the "register pointer" if it's set.
 - `Xa :` sets the register pointer. Numbers are used literally, booleans and strings are [converted](#type-conversion) to an integer form (first bit/byte to most significant).
-  - `` `: -> Nz`` reads and clears the pointer, erroring if empty.
+  - `` `: -> Nz`` reads and clears the pointer, `()` if unset.
 - `Xa s⒭` saves a value to a register, overwriting the top if it exists.
 - `Xa S⒭` pushes a value to a register.
 - `l⒭ -> Xz` loads a value from a register, erroring if empty.
@@ -257,9 +256,9 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 
 # Other commands
 
-- `Xa z -> NZz` converts a value into its type discriminant: Boolean is `` `1 ``, number is `` `2 ``, string is `` `3 ``.
+- `Xa z -> NZz` converts a value into its type discriminant: Boolean is `1`, number is `2`, string is `3`.
 - `NNa w` waits for *a* nanoseconds. The actual time may be different depending on platform/scheduling details.
-- `NNa N -> NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance. Still available in [restricted mode](#os-commands).
+- `NNa N -> NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance. Still available in [restricted mode](#os-commands), as meaningful attacks are impossible.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
 - `q` quits the ADC interpreter. If the [register pointer](#registers) is set, the lowest byte of its integer part is returned as the exit code.
   - `` `q `` is a "hard" quit, which may be handled differently.

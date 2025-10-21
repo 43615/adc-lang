@@ -239,7 +239,7 @@ fn main() -> ExitCode {
 
 	//init state structs
 	let mut st = State::default();
-	let io = Mutex::new(IOStreams::process());
+	let mut io = Mutex::new(IOStreams::process());
 	let mut exit_code = 0.into();
 
 	'act: for act in acts {
@@ -247,7 +247,9 @@ fn main() -> ExitCode {
 		match act {
 			Inter(prompt) => {
 				'repl: loop {
-					match io.lock().unwrap().0.read_line(&prompt) {
+					if let Err(c) = io.get_mut().unwrap().1.write_all(prompt.as_bytes()).map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
+					if let Err(c) = io.get_mut().unwrap().1.flush().map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
+					match io.get_mut().unwrap().0.read_line() {
 						Ok(line) => {
 							let start = Utf8Iter::from(line.as_bytes());
 
@@ -263,15 +265,15 @@ fn main() -> ExitCode {
 						Err(e) => {
 							match e.kind() {
 								ErrorKind::Interrupted => {
-									eprintln!("Interrupted");
+									eprintln!("Interactive mode: Interrupted");
 									continue 'act;
 								},
 								ErrorKind::UnexpectedEof => {
-									eprintln!("EOF");
+									eprintln!("Interactive mode: EOF");
 									continue 'act;
 								}
 								_ => {
-									return runtime_error(format!("Interactive mode error: {e}"));
+									return runtime_error(format!("Interactive mode IO error: {e}"));
 								}
 							}
 						}
