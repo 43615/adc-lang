@@ -284,7 +284,7 @@ There are some commands that interact with the OS running the interpreter. To pr
 
 # Errors
 
-Runtime errors fall into 2 categories, distinguished by `!` and `?`. These are printed to the "error" stream unless Quiet mode is enabled.
+Runtime errors fall into 2 categories, distinguished by `!` and `?`. These are printed to the error stream unless Quiet mode is enabled.
 - Syntax error: `! Invalid command: 💀 (U+1F480)`
 - Value error: `? /: Can't divide by zero`
 

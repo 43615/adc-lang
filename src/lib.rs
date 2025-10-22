@@ -18,7 +18,7 @@ mod os;
 
 use lazy_static::lazy_static;
 use std::cell::LazyCell;
-use std::io::{BufRead, ErrorKind, Write};
+use std::io::{Stdin, Stdout, Sink, Read, Write, BufRead, ErrorKind};
 use std::ops::Bound;
 use std::ptr::NonNull;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -37,23 +37,12 @@ use malachite::base::rounding_modes::RoundingMode;
 /// Added at the start of saved state files
 pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
 
-/// Specifies the line editor to use, with a default config
-type InnerEditor = rustyline::Editor<(), rustyline::history::MemHistory>;
-#[repr(transparent)] struct LineEditor(InnerEditor);
+type InnerEditor = ();
+
+struct LineEditor(InnerEditor);
 impl Default for LineEditor {
 	fn default() -> Self {
-		let conf = rustyline::Config::builder()
-			.auto_add_history(true)
-			.enable_signals(true)
-			.max_history_size(usize::MAX).unwrap()
-			.build();
-
-		Self(
-			InnerEditor::with_history(
-			conf.clone(),
-			rustyline::history::MemHistory::with_config(&conf)
-			).unwrap()
-		)
+		todo!()
 	}
 }
 
@@ -65,8 +54,6 @@ pub trait ReadLine {
 	///
 	/// [`ErrorKind::Interrupted`] causes `?` to error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
 	fn read_line(&mut self) -> std::io::Result<String>;
-
-
 }
 impl<T: BufRead> ReadLine for T {
 	fn read_line(&mut self) -> std::io::Result<String> {
@@ -77,18 +64,7 @@ impl<T: BufRead> ReadLine for T {
 }
 impl ReadLine for LineEditor {
 	fn read_line(&mut self) -> std::io::Result<String> {
-		self.0.readline("").map_err(|re| {
-			use rustyline::error::{ReadlineError::*, Signal};
-			use std::io::Error;
-			match re {
-				Io(e) => e,
-				Eof => Error::from(ErrorKind::UnexpectedEof),
-				Interrupted | Signal(Signal::Interrupt) => Error::from(ErrorKind::Interrupted),
-				Errno(e) => Error::from(e),
-				Signal(Signal::Resize) => Error::other("Window size changed"),
-				_ => Error::other("Unknown input error")
-			}
-		})
+		todo!()
 	}
 }
 
@@ -291,9 +267,11 @@ pub enum ExecResult {
 {
 	use ExecResult::*;
 
-	let th_name: String = match th::current().name() {
-		Some("main") | None => "".into(),
-		Some(s) => s.into()
+	let th_name = if kill.is_some() {
+		th::current().name().unwrap().to_owned()
+	}
+	else {
+		String::new()
 	};
 
 	let mut pbuf: Option<String> = None;	//print-to-string buffer
