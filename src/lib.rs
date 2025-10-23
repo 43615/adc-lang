@@ -18,12 +18,13 @@ mod os;
 
 use lazy_static::lazy_static;
 use std::cell::LazyCell;
-use std::io::{Stdin, Stdout, Sink, Read, Write, BufRead, ErrorKind};
+use std::io::{Write, BufRead, ErrorKind};
 use std::ops::Bound;
 use std::ptr::NonNull;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread as th;
+use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Integer, Natural, Rational};
 use malachite::base::num::arithmetic::traits::{NegAssign, Pow};
@@ -37,12 +38,15 @@ use malachite::base::rounding_modes::RoundingMode;
 /// Added at the start of saved state files
 pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
 
-type InnerEditor = ();
-
-struct LineEditor(InnerEditor);
+struct LineEditor(Interface<DefaultTerminal>);
 impl Default for LineEditor {
 	fn default() -> Self {
-		todo!()
+		use linefeed::Signal::*;
+		let iface = Interface::new("").unwrap();
+		iface.set_report_signal(Break, true);
+		iface.set_report_signal(Interrupt, true);
+		iface.set_report_signal(Quit, true);
+		Self(iface)
 	}
 }
 
@@ -54,6 +58,9 @@ pub trait ReadLine {
 	///
 	/// [`ErrorKind::Interrupted`] causes `?` to error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
 	fn read_line(&mut self) -> std::io::Result<String>;
+
+	/// If [`Self`] has a history, clear it.
+	fn clear_history(&mut self);
 }
 impl<T: BufRead> ReadLine for T {
 	fn read_line(&mut self) -> std::io::Result<String> {
@@ -61,10 +68,35 @@ impl<T: BufRead> ReadLine for T {
 		self.read_line(&mut buf)?;
 		Ok(buf)
 	}
+
+	fn clear_history(&mut self) {
+		// no history, do nothing
+	}
 }
 impl ReadLine for LineEditor {
 	fn read_line(&mut self) -> std::io::Result<String> {
-		todo!()
+		use linefeed::{ReadResult, Signal};
+		match self.0.read_line() {
+			Ok(ReadResult::Input(s)) => {
+				self.0.add_history_unique(s.clone());
+				Ok(s)
+			},
+			Ok(ReadResult::Eof) => {Err(ErrorKind::UnexpectedEof.into())},
+			Ok(ReadResult::Signal(sig)) => {
+				self.0.cancel_read_line()?;
+				match sig {
+					Signal::Break | Signal::Interrupt | Signal::Quit => {Err(ErrorKind::Interrupted.into())},
+					Signal::Continue => {Err(std::io::Error::other("Unhandled SIGCONT"))},
+					Signal::Suspend => {Err(std::io::Error::other("Unhandled SIGTSTP"))},
+					Signal::Resize => {Err(std::io::Error::other("Unhandled window resize"))},
+				}
+			},
+			Err(e) => {Err(e)}
+		}
+	}
+
+	fn clear_history(&mut self) {
+		self.0.clear_history();
 	}
 }
 
@@ -90,7 +122,7 @@ impl IOStreams {
 	/// Use IO streams of the process (stdin, stdout, stderr), with extra line editor on stdin
 	pub fn process() -> Self {
 		Self (
-			Box::new(std::io::BufReader::new(std::io::stdin())),
+			Box::new(LineEditor::default()),
 			Box::new(std::io::stdout()),
 			Box::new(std::io::stderr())
 		)
@@ -601,7 +633,8 @@ pub enum ExecResult {
 							}
 						},
 						b'?' => {	//read line
-							match io.lock().unwrap().0.read_line() {
+							let res = {io.lock().unwrap().0.read_line()};	//drop lock
+							match res {
 								Ok(s) => {
 									push!(Value::S(s));
 								},
@@ -920,6 +953,9 @@ pub enum ExecResult {
 								b"trim" => {
 									st.trim();
 									RE_CACHE.clear();
+								},
+								b"clhist" => {
+									io.lock().unwrap().0.clear_history();
 								},
 								b"clpar" => {
 									st.params = ParamStk::default();

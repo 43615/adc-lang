@@ -75,6 +75,19 @@ Some commands have an alternative mode accessed by prefixing `` ` `` (read as "a
 There are some advanced commands represented by words instead of the usual single characters, starting with `_` (underscore) and running until the next whitespace character.
 
 
+# Input and output
+
+The interpreter is connected to a standard set of I/O streams: Input, output, and error. The error stream works automatically, see [below](#errors).
+- `? -> Sz` reads one line of input into a string. **CLI:** Interrupt signals cancel the command, EOF makes an empty string.
+- `Xa p` pops and prints the top-of-stack value.
+- `Xa P` prints without a newline.
+- `fp` prints the whole stack line-by-line, keeping the contents. The top value is printed last.
+- For the above printing commands, prefixing `` ` `` will print `[brackets]` around strings.
+- `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
+- `_clhist` clears the input history. Does nothing if no history is implemented.
+- **CLI:** uses the IO streams of the process, input uses an additional [line editor](https://crates.io/crates/linefeed). The library may be attached to other streams using a generic interface.
+
+
 # Array polymorphism
 
 Arrays are ordered, contiguous lists of objects with arbitrary length. Due to the fact that the contained objects can themselves be arrays, their dimensionality is unlimited. In ADC, arrays are written `(with parentheses)`. Here's an example of inputting a 2-dimensional array:
@@ -182,18 +195,6 @@ Since nesting is required for any complex program, string input uses `[square br
 - `\[` and `\]`: Unpaired square brackets (5B, 5D), not processed as string delimiters. These need to be escaped multiple (2^N-1) times in nested strings, as one would do with quotes in other languages ("backslash explosion"). Example: Executing `[[[foo\\\\\\\]bar]]]` parses it into `[[foo\\\]bar]]`, then `[foo\]bar]` and finally `foo]bar` (as it would be printed).
   - A nicer alternative is to use [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93 <TODO> +[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
 - `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is rejected otherwise.
-
-
-# Input and output
-
-The interpreter is connected to a standard set of I/O streams: Input, output, and error. The error stream works automatically, see [below](#errors).
-- `? -> Sz` reads one line of input into a string.
-- `Xa p` pops and prints the top-of-stack value.
-- `Xa P` prints without a newline.
-- `fp` prints the whole stack line-by-line, keeping the contents. The top value is printed last.
-- For the above printing commands, prefixing `` ` `` will print `[brackets]` around strings.
-- `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
-- **CLI:** uses the IO streams of the process, input has an additional [line editor](https://crates.io/crates/rustyline) to enable shortcuts and history. The library may be attached to other streams using a generic interface.
 
 
 # Stack operations

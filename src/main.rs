@@ -21,7 +21,7 @@ Long and short flags are interchangeable. Short flags may not be concatenated: `
 	INSTRUCTIONS
 	------------
 	`-i|--inter <prompt>?` starts an interactive (REPL) session. May use a custom prompt, the default is `> `.
-		This is the default if no instructions are given. ^C and ^D end the session.
+		This is the default if no instructions are given. ^C ends the session, ^D runs an empty string.
 	`-e|--exec <macro>*` executes the argument(s) directly as a sequence of ADC commands.
 		Ensure that characters with special uses in your shell's syntax are ignored/escaped properly.
 	`-f|--file <path>*` executes the specified file(s) as a script, without creating or modifying it.
@@ -249,7 +249,10 @@ fn main() -> ExitCode {
 				'repl: loop {
 					if let Err(c) = io.get_mut().unwrap().1.write_all(prompt.as_bytes()).map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
 					if let Err(c) = io.get_mut().unwrap().1.flush().map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
-					match io.get_mut().unwrap().0.read_line() {
+					let mut res = io.get_mut().unwrap().0.read_line().map_err(|e| e.kind());
+					if res == Err(ErrorKind::UnexpectedEof) {res = Ok(String::new())};	//replace with empty string
+					
+					match res {
 						Ok(line) => {
 							let start = Utf8Iter::from(line.as_bytes());
 
@@ -261,21 +264,13 @@ fn main() -> ExitCode {
 								Ok(HardQuit(c)) => {return c;}
 								Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 							}
-						}
+						},
+						Err(ErrorKind::Interrupted) => {
+							eprintln!("Interactive mode: Interrupted");
+							continue 'act;
+						},
 						Err(e) => {
-							match e.kind() {
-								ErrorKind::Interrupted => {
-									eprintln!("Interactive mode: Interrupted");
-									continue 'act;
-								},
-								ErrorKind::UnexpectedEof => {
-									eprintln!("Interactive mode: EOF");
-									continue 'act;
-								}
-								_ => {
-									return runtime_error(format!("Interactive mode IO error: {e}"));
-								}
-							}
+							return runtime_error(format!("Interactive mode IO error: {e}"));
 						}
 					}
 				}
