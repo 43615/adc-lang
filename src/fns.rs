@@ -65,7 +65,7 @@ pub(crate) fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 			for val in src {	//iterate through current layer
 				if let A(nsrc) = val {	//array encountered, pseudorecursion needed
 					dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-					let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
+					let A(ndst) = dst.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//get pointer to destination
 					q.push_back((nsrc, ndst.into()));	//add nested source and destination arrays to queue
 				}
 				else {	//scalar value, compute and store result
@@ -93,7 +93,7 @@ pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnEr
 					match (va, vb) {
 						(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
 							dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-							let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
+							let A(ndst) = dst.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//get pointer to destination
 							q.push_back((va, vb, ndst.into()));	//add nested source and destination arrays to queue
 						}
 						(_, _) => {	//scalar value, compute and store result
@@ -127,7 +127,7 @@ pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<
 						(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
 						(A(_), _, _) | (_, A(_), _) | (_, _, A(_)) => {	//one, two, or three elements are arrays
 							dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
-							let A(ndst) = dst.as_mut().last_mut().unwrap() else { std::hint::unreachable_unchecked() };	//get pointer to destination
+							let A(ndst) = dst.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//get pointer to destination
 							q.push_back((va, vb, vc, ndst.into()));	//add nested source and destination arrays to queue
 						}
 						(_, _, _) => {	//scalar value, compute and store result

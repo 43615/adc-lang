@@ -1,11 +1,9 @@
 //! Storage structs and methods
 
-#![allow(dead_code)] // TODO: make not dead
-
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
 use regex::{Regex, RegexBuilder};
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, RwLock};
@@ -68,7 +66,7 @@ impl Value {
 		use Value::*;
 		match self {
 			B(b) => {
-				b.iter().by_vals().rev().map(|b| if b {'T'} else {'F'}).collect()
+				b.iter().by_vals().map(|b| if b {'T'} else {'F'}).collect()
 			},
 			N(n) => {
 				use crate::num::*;
@@ -115,6 +113,7 @@ impl Value {
 					if let Some(val) = i.next() {	//advance it
 						match val {
 							A(aa) => {	//nested array encountered
+								if res.ends_with(' ') {res.pop();}
 								res.push('(');
 								stk.push(aa.iter());	//"recursive call"
 							},

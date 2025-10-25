@@ -119,7 +119,7 @@ impl IOStreams {
 		)
 	}
 
-	/// Use IO streams of the process (stdin, stdout, stderr), with extra line editor on stdin
+	/// Use IO streams of the process (stdin, stdout, stderr), with extra [line editor](linefeed) on stdin
 	pub fn process() -> Self {
 		Self (
 			Box::new(LineEditor::default()),
@@ -695,25 +695,24 @@ pub enum ExecResult {
 							}
 						},
 						b'(' => {	//array input: open
-							if !dest.is_empty() {	//first layer already exists
-								abuf.push(Value::default());
-							}
-							dest.push(
-								if let Some(Value::A(new)) = abuf.last_mut() {
-									new.into()	//new nested array
-								}
-								else {
-									(&mut abuf).into()	//abuf itself as first layer
-								}
-							);
+							let nn = if let Some(p) = dest.last_mut() { unsafe {	//SAFETY: dest is only mutated here, logic is sound
+								p.as_mut().push(Value::A(Vec::new()));	//create nested A
+								let Value::A(new) = &mut p.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//and get reference to it
+								NonNull::from(new)
+							}}
+							else {
+								NonNull::from(&mut abuf)	//abuf itself as first layer
+							};
+							dest.push(nn);
 						},
 						b')' => {	//array input: close
-							if dest.is_empty() {
-								synerr!(')', "Mismatched closing ')'");
+							if dest.pop().is_some() {
+								if dest.is_empty() {	//completed
+									st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));	//commit to stack
+								}
 							}
-							dest.pop().unwrap();
-							if dest.is_empty() {	//completed
-								st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
+							else {
+								synerr!(')', "Mismatched closing ')'");
 							}
 						},
 						b'q' => {
@@ -733,6 +732,7 @@ pub enum ExecResult {
 											call.truncate(call.len().saturating_sub(u));
 											if !dest.is_empty() {	//flush array buffer if not completed
 												st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
+												dest.clear();	//SAFETY: remove leftover dangling references
 											}
 											continue 'mac;
 										}
@@ -1257,6 +1257,7 @@ pub enum ExecResult {
 
 		if !dest.is_empty() {	//flush array buffer if not completed
 			st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
+			dest.clear();	//SAFETY: remove leftover dangling references
 		}
 
 		if *count == Natural::ZERO {	//all repetitions finished
