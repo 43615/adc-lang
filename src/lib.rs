@@ -21,13 +21,14 @@ use std::cell::LazyCell;
 use std::io::{Write, BufRead, ErrorKind};
 use std::ptr::NonNull;
 use std::str::FromStr;
-use std::sync::mpsc::{Receiver, TryRecvError};
+use std::sync::mpsc::{Receiver, TryRecvError, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::thread as th;
 use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Integer, Natural, Rational};
-use malachite::base::num::arithmetic::traits::{NegAssign, Pow};
+use malachite::base::num::arithmetic::traits::{DivRem, NegAssign, Pow};
 use malachite::base::num::random::RandomPrimitiveInts;
 use malachite::natural::random::get_random_natural_less_than;
 use malachite::base::num::basic::traits::{NegativeOne, One, Zero};
@@ -213,7 +214,7 @@ const CMDS: [Command; 256] = {
 		Special,	Special,	Wrong,		Cmd(cls),	Special,	Wrong,		Special,	Fn1(log),	Wrong,		Cmd(si),	Wrong,		Cmd(sk),	Wrong,		Cmd(sm),	Wrong,		Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Special,	Special,	Cmd(rev),	Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
+		Special,	Special,	Cmd(rev),	Wrong,		Wrong,		Wrong,		Wrong,		Special,	Special,	Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
 
 		//~~description of what i'm doing:~~ non-ASCII:
 		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
@@ -909,6 +910,49 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								(None, true) => {
 									synerr!('N', "Command '`N' needs 1 argument, 0 given");
 								}
+							}
+						},
+						b'w' => {	//wait
+							if let Some(va) = st.mstk.pop() {
+								if let Value::N(r) = &*va {
+									if let Some(dur) = Natural::try_from(r).ok().and_then(|n| {
+										let (s, ns) = n.div_rem(Natural::const_from(1_000_000_000));
+										u64::try_from(&s).ok().map(|s| {
+											let ns = unsafe { u32::try_from(&ns).unwrap_unchecked() };	//SAFETY: remainder always fits
+											Duration::new(s, ns)
+										})
+									}) {
+										if let Some(rx) = kill {
+											match rx.recv_timeout(dur) {
+												Ok(()) => {	//killed by parent
+													return Ok(Finished);
+												},
+												Err(RecvTimeoutError::Timeout) => {	//wait completed, not killed
+													//do nothing
+												},
+												Err(RecvTimeoutError::Disconnected) => {	//parent should never disconnect
+													unreachable!()
+												}
+											}
+										}
+										else {
+											th::sleep(dur);	//no kill receiver, just sleep
+										}
+									}
+									else {
+										let vs = va.to_string();
+										st.mstk.push(va);
+										valerr!('w', "Can't possibly wait {} ns", vs);
+									}
+								}
+								else {
+									let ta = crate::errors::TypeLabel::from(&*va);
+									st.mstk.push(va);
+									synerr!('w', "Command 'w' needs a number, {} given", ta);
+								}
+							}
+							else {
+								synerr!('w', "Command 'w' needs 1 argument, 0 given");
 							}
 						},
 						b'_' => {	//word commands
