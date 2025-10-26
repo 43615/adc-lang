@@ -2,6 +2,7 @@
 //!
 //! New resulting values are written to a `Vec` to enable redirection to array input.
 
+use malachite::base::num::basic::traits::Zero;
 use crate::structs::{State, Value};
 use crate::errors::TypeLabel;
 use malachite::Rational;
@@ -158,4 +159,13 @@ cmd!(rev, st {
 		st.mstk.swap(len - 1, len - 2);
 	}	//else no-op
 	Ok(vec![])
+});
+
+cmdr!(rz, st, ri {
+	if let Some(reg) = st.regs.try_get(ri) {
+		Ok(vec![Value::N(reg.v.len().into())])
+	}
+	else {
+		Ok(vec![Value::N(Rational::ZERO)])
+	}
 });

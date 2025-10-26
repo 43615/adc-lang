@@ -19,8 +19,8 @@ mod os;
 use lazy_static::lazy_static;
 use std::cell::LazyCell;
 use std::io::{Write, BufRead, ErrorKind};
-use std::ops::Bound;
 use std::ptr::NonNull;
+use std::str::FromStr;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread as th;
@@ -43,6 +43,7 @@ impl Default for LineEditor {
 	fn default() -> Self {
 		use linefeed::Signal::*;
 		let iface = Interface::new("").unwrap();
+		//these do not take &mut self, shrug
 		iface.set_report_signal(Break, true);
 		iface.set_report_signal(Interrupt, true);
 		iface.set_report_signal(Quit, true);
@@ -206,7 +207,7 @@ const CMDS: [Command; 256] = {
 		Lit,		Wrong,		Wrong,		Cmd(cln),	Special,	Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	Wrong,		Cmd(gk),	Wrong,		Cmd(gm),	Wrong,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
-		Special,	Special,	Special,	Wrong,		Lit,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		Wrong,		Lit,		Wrong,		Wrong,		Fn2(pow),	Special,
+		Special,	Special,	Special,	Wrong,		Lit,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		CmdR(rz),	Lit,		Wrong,		Wrong,		Fn2(pow),	Special,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
 		Special,	Special,	Wrong,		Cmd(cls),	Special,	Wrong,		Special,	Fn1(log),	Wrong,		Cmd(si),	Wrong,		Cmd(sk),	Wrong,		Cmd(sm),	Wrong,		Cmd(so),
@@ -257,9 +258,8 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 }
 
 /// Results of running [`interpreter`], wrappers should handle these differently
-#[must_use]
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ExecResult {
+#[must_use] pub enum ExecResult {
 	/// Commands ran to completion, request further input
 	Finished,
 
@@ -350,7 +350,7 @@ pub enum ExecResult {
 		};
 	}
 
-	macro_rules! debug {
+	/*macro_rules! debug {
     	($s:expr) => {
 			if ll == LogLevel::Debug {
 				let err = &mut io.lock().unwrap().2;
@@ -365,9 +365,7 @@ pub enum ExecResult {
 				err.flush()?;
 			}
 		};
-	}
-
-	let mut aptr: Vec<(Bound<usize>, Bound<usize>)> = Vec::new();
+	}*/
 
 	let mut rptr: Option<Rational> = None;	//allow setting by a macro
 
@@ -580,7 +578,7 @@ pub enum ExecResult {
 											}
 											else {
 												st.mstk.push(va);
-												valerr!('D', "Command 'D': Can't duplicate {} values, stack depth is {}", u, st.mstk.len());
+												valerr!('D', "Command 'D': Can't duplicate {} values, stack depth is {}", u, st.mstk.len() - 1);
 											}
 										}
 										Err(_) => {
@@ -612,7 +610,7 @@ pub enum ExecResult {
 											}
 											else {
 												st.mstk.push(va);
-												valerr!('R', "Command 'R': Can't rotate {} values, stack depth is {}", u, st.mstk.len());
+												valerr!('R', "Command 'R': Can't rotate {} values, stack depth is {}", u, st.mstk.len() - 1);
 											}
 										}
 										Err(_) => {
@@ -757,6 +755,9 @@ pub enum ExecResult {
 							match mac.next() {
 								Some(b) if !matches!(byte_cmd(b), Space) => {
 									match b {
+										b'a' => {
+											todo!()
+										},
 										_ => {
 											synerr!('a', "Invalid array command: 'a{}'", b as char);
 										}
@@ -788,7 +789,7 @@ pub enum ExecResult {
 															}
 															else {
 																st.mstk.push(va);
-																valerr!('f', "Command 'fR': Can't reverse {} values, stack depth is {}", u, st.mstk.len());
+																valerr!('f', "Command 'fR': Can't reverse {} values, stack depth is {}", u, st.mstk.len() - 1);
 															}
 														}
 														Err(_) => {
@@ -1018,6 +1019,8 @@ pub enum ExecResult {
 							let mut ipart = Vec::new();
 							let mut fpart = Vec::new();
 							let mut rpart = Vec::new();
+							let mut get_epart = true;
+							let mut exp = None;
 							let mut discard = false;
 							let mut ibase = st.params.get_i().clone();
 
@@ -1102,41 +1105,161 @@ pub enum ExecResult {
 									}
 								},
 								(true, true) => {	//enclosed
-									todo!()
+									get_epart = false;
+									let ns= mac.by_ref().take_while(|b| *b != b'\'').collect::<Vec<u8>>();
+									if ns.is_empty() {
+										synerr!('\'', "Empty any-base number");
+										continue 'cmd;
+									}
+									for nc in ns.iter() {
+										match nc {
+											b' ' | b'.' | b'0'..=b'9' | b'@' | b'`' => {}	//fine
+											wrong => {
+												synerr!('\'', "Invalid character in any-base number: {}", string_or_bytes(&[*wrong]));
+												continue 'cmd;
+											}
+										}
+									}
+									let mut ms = Vec::new();
+									match ns.split(|b| *b == b'@').collect::<Vec<&[u8]>>()[..] {
+										[mpart] => {	//only mantissa
+											ms = mpart.to_vec();
+										},
+										[mpart, epart] => {	//mantissa and exponent
+											ms = mpart.to_vec();
+											let mut es = epart.to_vec();
+											if let Some(first) = es.first_mut() && *first == b'`' { *first = b'-'; }
+											match String::from_utf8(es) {
+												Ok(es) => {
+													match es.parse::<i64>() {
+														Ok(i) => { exp = Some(i); },
+														Err(e) => {
+															use std::num::IntErrorKind::*;
+															match e.kind() {
+																Empty => { exp = Some(0); },
+																InvalidDigit => {
+																	valerr!('\'', "Invalid exponent: {}", es);
+																	continue 'cmd;
+																},
+																PosOverflow | NegOverflow => {
+																	valerr!('\'', "Exponent {} is unrepresentable", es);
+																	continue 'cmd;
+																},
+																_ => { unreachable!() }
+															}
+														}
+													}
+												},
+												_ => { unreachable!() }
+											}
+										},
+										ref v => {
+											synerr!('\'', "{} exponent signs (@) in any-base number", v.len() - 1);
+											drop(ms);
+											continue 'cmd;
+										}
+									}
+									let mut is = Vec::new();
+									let mut frs = Vec::new();
+									match ms.split(|b| *b == b'.').collect::<Vec<&[u8]>>()[..] {
+										[ipart] => {
+											is = ipart.to_vec();
+										},
+										[ipart, fpart] => {
+											is = ipart.to_vec();
+											frs = fpart.to_vec();
+										},
+										ref v => {
+											synerr!('\'', "{} fractional points (.) in any-base number", v.len() - 1);
+											drop(is);
+											continue 'cmd;
+										}
+									}
+									if is.contains(&b'`') {
+										synerr!('\'', "Negative sign (`) inside any-base number");
+										continue 'cmd;
+									}
+									let mut fs = Vec::new();
+									let mut rs = Vec::new();
+									match frs.split(|b| *b == b'`').collect::<Vec<&[u8]>>()[..] {
+										[fpart] => {
+											fs = fpart.to_vec();
+										},
+										[fpart, rpart] => {
+											fs = fpart.to_vec();
+											rs = rpart.to_vec();
+										},
+										ref v => {
+											synerr!('\'', "{} recurring marks (`) in any-base number", v.len() - 1);
+											drop(fs);
+											continue 'cmd;
+										}
+									}
+									for id in is.split(|b| *b == b' ') {
+										let id = str::from_utf8(id).unwrap();
+										ipart.push(Natural::from_str(id).unwrap());
+									}
+									for fd in fs.split(|b| *b == b' ') {
+										let fd = str::from_utf8(fd).unwrap();
+										fpart.push(Natural::from_str(fd).unwrap());
+									}
+									for rd in rs.split(|b| *b == b' ') {
+										let rd = str::from_utf8(rd).unwrap();
+										rpart.push(Natural::from_str(rd).unwrap());
+									}
+									for d in ipart.iter().chain(fpart.iter()).chain(rpart.iter()) {
+										if *d >= ibase {
+											synerr!('\'', "Digit {} is too high for base {}", d, ibase);
+											continue 'cmd;
+										}
+									}
 								}
 							}
 
-							ipart.reverse();	//malachite needs reverse order
-							let mut r = Rational::from_digits(&ibase, ipart, RationalSequence::from_vecs(fpart, rpart));
-							if alt {r.neg_assign();}	//negative sign was already set
+							let m_empty = ipart.is_empty() && fpart.is_empty() && rpart.is_empty();
+							let mut r;
+							if m_empty {
+								r = Rational::ZERO;
+							}
+							else {
+								ipart.reverse();	//malachite needs reverse order
+								r = Rational::from_digits(&ibase, ipart, RationalSequence::from_vecs(fpart, rpart));
+								if alt {r.neg_assign();}	//negative sign was already set
+							}
 
-							match mac.next() {
-								Some(b'@') => {	//exponent part
-									let mut es = String::new();
-									let mut eneg = false;	//negative sign occurred
-									while let Some(eb) = mac.next() {
-										match eb {
-											b'`' if !eneg => {es.push('-');},
-											b'0'..=b'9' => {es.push(eb as char);},
-											_ => {
-												mac.back();
-												break;
+							if get_epart {
+								match mac.next() {
+									Some(b'@') => {    //exponent part
+										let mut es = String::new();
+										let mut eneg = false;    //negative sign occurred
+										while let Some(eb) = mac.next() {
+											match eb {
+												b'`' if !eneg => { es.push('-'); }
+												b'0'..=b'9' => { es.push(eb as char); }
+												_ => {
+													mac.back();
+													break;
+												}
 											}
+											eneg = true;    //only allow on first char
 										}
-										eneg = true;	//only allow on first char
+										if es.is_empty() { es.push('0'); }
+										if m_empty { r = Rational::ONE; }    //only exponent part
+										if let Ok(i) = es.parse::<i64>() {
+											r *= Rational::from(st.params.get_i()).pow(i);    //apply exponent, get original ibase
+										}
+										else {
+											valerr!('\'', "Exponent {} is unrepresentable", es);
+											discard = true;
+										}
 									}
-									if es.is_empty() {es.push('0');}
-									if r == Rational::ZERO {r = Rational::ONE;}	//only exponent part
-									if let Ok(exp) = es.parse::<i64>() {
-										r *= Rational::from(st.params.get_i()).pow(exp);	//get original ibase
-									}
-									else {
-										valerr!('\'', "Exponent {} is unrepresentable", es);
-										discard = true;
-									}
-								},
-								Some(_) => {mac.back();},
-								None => {}
+									Some(_) => { mac.back(); }
+									None => {}
+								}
+							}
+							else if let Some(i) = exp {
+       							if m_empty { r = Rational::ONE; }    //only exponent part
+       							r *= Rational::from(ibase).pow(i);    //apply exponent
 							}
 
 							if !discard {

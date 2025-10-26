@@ -467,12 +467,12 @@ pub const DEFAULT_PARAMS: Params = {
 #[derive(Clone, Debug)]
 #[repr(transparent)] pub struct ParamStk(Vec<Params>);
 impl ParamStk {
-	/// Creates new context with default values
+	/// Creates new context with [`DEFAULT_PARAMS`]
 	pub fn create(&mut self) {
 		self.0.push(DEFAULT_PARAMS)
 	}
 
-	/// Returns to previous context, create default if at bottom
+	/// Returns to previous context, creates default if none left
 	pub fn destroy(&mut self) {
 		self.0.pop();
 		if self.0.is_empty() {self.create();}
@@ -491,11 +491,6 @@ impl ParamStk {
 	/// Extracts the underlying [`Vec`] for manual access
 	pub fn into_inner(self) -> Vec<Params> {
 		self.0
-	}
-
-	/// Creates [`Self`] from an underlying [`Vec`], length must be at least 1
-	pub fn try_from_inner(v: Vec<Params>) -> Option<Self> {
-		(!v.is_empty()).then_some(Self(v))
 	}
 
 	/// Checked edit of current output precision
@@ -525,14 +520,23 @@ impl ParamStk {
 		else {Err("Output base must be a natural number >=2")}
 	}
 
-	/// Set number output mode
+	/// Checked edit of current output mode
 	pub fn try_set_m(&mut self, r: &Rational) -> Result<(), &'static str> {
 		if let Ok(u) = u8::try_from(r) && u<=3 {
 			unsafe { self.0.last_mut().unwrap_unchecked().3 = std::mem::transmute::<u8, NumOutMode>(u); }
 			Ok(())
 		}
 		else {Err("Output mode must be 0|1|2|3")}
-		
+	}
+	
+	/// Infallible edit of current output precision
+	pub fn set_k(&mut self, u: usize) {
+		unsafe { self.0.last_mut().unwrap_unchecked().0 = u; }
+	}
+
+	/// Infallible edit of current output mode
+	pub fn set_m(&mut self, m: NumOutMode) {
+		unsafe { self.0.last_mut().unwrap_unchecked().3 = m; }
 	}
 
 	/// Current output precision
@@ -555,11 +559,20 @@ impl ParamStk {
 		unsafe { self.0.last().unwrap_unchecked().3 }
 	}
 }
+/// One entry of [`DEFAULT_PARAMS`].
 impl Default for ParamStk {
 	fn default() -> Self {
 		let mut p = Self(Vec::new());
 		p.create();
 		p
+	}
+}
+/// Length must be at least 1.
+impl TryFrom<Vec<Params>> for ParamStk {
+	type Error = ();
+
+	fn try_from(value: Vec<Params>) -> Result<Self, Self::Error> {
+		(!value.is_empty()).then_some(Self(value)).ok_or(())
 	}
 }
 
