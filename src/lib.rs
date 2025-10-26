@@ -813,7 +813,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 											let ri = if let Some(r) = rptr.take() {r}
 											else {
 												if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
-													synerr!(b as char, "Command 'ff' needs a register index");
+													synerr!('f', "Command 'ff' needs a register index");
 													alt = false;
 													continue 'cmd;
 												}
@@ -1014,8 +1014,6 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 							push!(Value::B(bits));
 						},
 						b'\'' | b'0'..=b'9' | b'.' | b'@' => {	//numbers
-							mac.back();
-
 							let mut ipart = Vec::new();
 							let mut fpart = Vec::new();
 							let mut rpart = Vec::new();
@@ -1026,6 +1024,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 
 							match (b == b'\'', ibase > Natural::const_from(36)) {
 								(false, high_base) => {	//plain
+									mac.back();
 									ibase = if high_base {Natural::const_from(10)} else {ibase};	//if plain but I>36, interpret mantissa with I=10
 									while let Some(ib) = mac.next() {	//integer part
 										let id = ib.wrapping_sub(0x30);
@@ -1109,6 +1108,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 									let ns= mac.by_ref().take_while(|b| *b != b'\'').collect::<Vec<u8>>();
 									if ns.is_empty() {
 										synerr!('\'', "Empty any-base number");
+										alt = false;
 										continue 'cmd;
 									}
 									for nc in ns.iter() {
@@ -1116,6 +1116,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 											b' ' | b'.' | b'0'..=b'9' | b'@' | b'`' => {}	//fine
 											wrong => {
 												synerr!('\'', "Invalid character in any-base number: {}", string_or_bytes(&[*wrong]));
+												alt = false;
 												continue 'cmd;
 											}
 										}
@@ -1139,10 +1140,12 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 																Empty => { exp = Some(0); },
 																InvalidDigit => {
 																	valerr!('\'', "Invalid exponent: {}", es);
+																	alt = false;
 																	continue 'cmd;
 																},
 																PosOverflow | NegOverflow => {
 																	valerr!('\'', "Exponent {} is unrepresentable", es);
+																	alt = false;
 																	continue 'cmd;
 																},
 																_ => { unreachable!() }
@@ -1156,6 +1159,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 										ref v => {
 											synerr!('\'', "{} exponent signs (@) in any-base number", v.len() - 1);
 											drop(ms);
+											alt = false;
 											continue 'cmd;
 										}
 									}
@@ -1172,11 +1176,13 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 										ref v => {
 											synerr!('\'', "{} fractional points (.) in any-base number", v.len() - 1);
 											drop(is);
+											alt = false;
 											continue 'cmd;
 										}
 									}
 									if is.contains(&b'`') {
 										synerr!('\'', "Negative sign (`) inside any-base number");
+										alt = false;
 										continue 'cmd;
 									}
 									let mut fs = Vec::new();
@@ -1192,31 +1198,33 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 										ref v => {
 											synerr!('\'', "{} recurring marks (`) in any-base number", v.len() - 1);
 											drop(fs);
+											alt = false;
 											continue 'cmd;
 										}
 									}
-									for id in is.split(|b| *b == b' ') {
+									if !is.is_empty() { for id in is.split(|b| *b == b' ') {
 										let id = str::from_utf8(id).unwrap();
 										ipart.push(Natural::from_str(id).unwrap());
-									}
-									for fd in fs.split(|b| *b == b' ') {
+									}}
+									if !fs.is_empty() { for fd in fs.split(|b| *b == b' ') {
 										let fd = str::from_utf8(fd).unwrap();
 										fpart.push(Natural::from_str(fd).unwrap());
-									}
-									for rd in rs.split(|b| *b == b' ') {
+									}}
+									if !rs.is_empty() { for rd in rs.split(|b| *b == b' ') {
 										let rd = str::from_utf8(rd).unwrap();
 										rpart.push(Natural::from_str(rd).unwrap());
-									}
+									}}
 									for d in ipart.iter().chain(fpart.iter()).chain(rpart.iter()) {
 										if *d >= ibase {
 											synerr!('\'', "Digit {} is too high for base {}", d, ibase);
+											alt = false;
 											continue 'cmd;
 										}
 									}
 								}
 							}
 
-							let m_empty = ipart.is_empty() && fpart.is_empty() && rpart.is_empty();
+							let m_empty = ipart.is_empty() && fpart.is_empty() && rpart.is_empty();	//simpler const, also keep track of emptiness
 							let mut r;
 							if m_empty {
 								r = Rational::ZERO;
@@ -1224,7 +1232,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 							else {
 								ipart.reverse();	//malachite needs reverse order
 								r = Rational::from_digits(&ibase, ipart, RationalSequence::from_vecs(fpart, rpart));
-								if alt {r.neg_assign();}	//negative sign was already set
+								if alt {r.neg_assign();}	//negative sign was set using alt
 							}
 
 							if get_epart {
