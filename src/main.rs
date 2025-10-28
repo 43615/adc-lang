@@ -1,10 +1,9 @@
 //! Executable CLI wrapper
 
-use std::convert::Into;
 use std::fs::{File, OpenOptions};
 use std::io::{ErrorKind, Read, Seek, Write};
 use std::process::ExitCode;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use adc_lang::*;
 use adc_lang::structs::{State, Utf8Iter};
 
@@ -239,29 +238,34 @@ fn main() -> ExitCode {
 
 	//init state structs
 	let mut st = State::default();
-	let mut io = Mutex::new(IOStreams::process());
-	let mut exit_code = 0.into();
+	let io = Arc::new(Mutex::new(IOStreams::process()));
+	let mut exit_code = 0;
 
 	'act: for act in acts {
 		use ExecResult::*;
 		match act {
 			Inter(prompt) => {
 				'repl: loop {
-					if let Err(c) = io.get_mut().unwrap().1.write_all(prompt.as_bytes()).map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
-					if let Err(c) = io.get_mut().unwrap().1.flush().map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
-					let mut res = io.get_mut().unwrap().0.read_line().map_err(|e| e.kind());
+					{
+						let out = &mut io.lock().unwrap().1;
+						if let Err(c) = out.write_all(prompt.as_bytes()).map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
+						if let Err(c) = out.flush().map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
+					}
+					let mut res = {
+						io.lock().unwrap().0.read_line().map_err(|e| e.kind())
+					};
 					if res == Err(ErrorKind::UnexpectedEof) {res = Ok(String::new())};	//replace with empty string
 					
 					match res {
 						Ok(line) => {
 							let start = Utf8Iter::from(line.as_bytes());
 
-							let res = interpreter(&mut st, start, &io, ll, None, strict);
+							let res = interpreter(&mut st, start, Arc::clone(&io), ll, None, strict);
 
 							match res {
 								Ok(Finished) => {continue 'repl;}
 								Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
-								Ok(HardQuit(c)) => {return c;}
+								Ok(HardQuit(c)) => {return c.into();}
 								Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 							}
 						},
@@ -278,12 +282,12 @@ fn main() -> ExitCode {
 			Macro(mac) => {
 				let start = Utf8Iter::from(mac.as_bytes());
 
-				let res = interpreter(&mut st, start, &io, ll, None, strict);
+				let res = interpreter(&mut st, start, Arc::clone(&io), ll, None, strict);
 
 				match res {
 					Ok(Finished) => {continue 'act;}
 					Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
-					Ok(HardQuit(c)) => {return c;}
+					Ok(HardQuit(c)) => {return c.into();}
 					Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 				}
 			}
@@ -292,12 +296,12 @@ fn main() -> ExitCode {
 				if let Err(c) = fd.read_to_end(&mut script).map_err(|e| {runtime_error(format!("Can't read from script file: {e}"))}) {return c;}
 				let start = Utf8Iter::from(script);
 
-				let res = interpreter(&mut st, start, &io, ll, None, strict);
+				let res = interpreter(&mut st, start, Arc::clone(&io), ll, None, strict);
 
 				match res {
 					Ok(Finished) => {continue 'act;}
 					Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
-					Ok(HardQuit(c)) => {return c;}
+					Ok(HardQuit(c)) => {return c.into();}
 					Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 				}
 			}
@@ -315,16 +319,16 @@ fn main() -> ExitCode {
 				let start = Utf8Iter::from(st_script);
 
 				let mut nst = State::default();
-				let no_io = Mutex::new(IOStreams::empty());
+				let no_io = Arc::new(Mutex::new(IOStreams::empty()));
 
-				let res = interpreter(&mut nst, start, &no_io, LogLevel::Quiet, None, true);	//delegate to normal interpreter
+				let res = interpreter(&mut nst, start, no_io, LogLevel::Quiet, None, true);	//delegate to normal interpreter
 
-				if res.unwrap() != Finished {return runtime_error("Invalid state file".into());}	//state files don't quit
+				if !matches!(res, Ok(Finished)) {return runtime_error("Invalid state file".into());}	//state files don't quit
 				
-				st = nst;
+				st.replace_vals(nst);
 			}
 		}
 	}
 
-	exit_code
+	exit_code.into()
 }

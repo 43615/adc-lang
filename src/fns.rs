@@ -2,13 +2,14 @@
 //! 
 //! Functions have 1, 2, or 3 `&Value` parameters (monadic, dyadic, triadic) and a boolean mode switch (false by default, enabled by \` command).
 
-use std::collections::{VecDeque};
+use std::collections::VecDeque;
 use std::ptr::NonNull;
+use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{DivRem, Mod, ModInverse, ModPow, Reciprocal};
 use malachite::base::num::basic::traits::{NegativeOne, Zero};
-use crate::structs::Value::{self, *};
 use crate::errors::FnErr::{self, *};
+use crate::structs::Value::{self, *};
 use crate::conv::*;
 use crate::RE_CACHE;
 
@@ -375,4 +376,81 @@ mon!(disc
 	B(_), _ => Ok(N(Rational::const_from_unsigned(1))),
 	N(_), _ => Ok(N(Rational::const_from_unsigned(2))),
 	S(_), _ => Ok(N(Rational::const_from_unsigned(3)))
+);
+
+dya!(eq
+	B(ba), B(bb), m => {
+		if ba.len() == bb.len() {
+			let mut bz = BitVec::new();
+			bz.push(ba == bb);
+			Ok(B(bz))
+		}
+		else if !m {
+			Err(Arith(
+				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+			))
+		}
+		else {	//total: false
+			let mut bz = BitVec::new();
+			bz.push(false);
+			Ok(B(bz))
+		}
+	},
+	N(na), N(nb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(na == nb);
+		Ok(B(bz))
+	},
+	S(sa), S(sb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(sa == sb);
+		Ok(B(bz))
+	},
+	_, _, true => {	//total: false
+		let mut bz = BitVec::new();
+		bz.push(false);
+		Ok(B(bz))
+	}
+);
+
+dya!(lt	//TODO: verify B
+	B(ba), B(bb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(
+			if ba.len() == bb.len() {ba < bb}
+			else {ba.len() < bb.len()}
+		);
+		Ok(B(bz))
+	},
+	N(na), N(nb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(na < nb);
+		Ok(B(bz))
+	},
+	S(sa), S(sb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(str_cmp(sa, sb).is_lt());
+		Ok(B(bz))
+	}
+);
+
+dya!(gt	//TODO: verify B
+	B(ba), B(bb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(
+			if ba.len() == bb.len() {ba > bb}
+			else {ba.len() > bb.len()}
+		);
+		Ok(B(bz))
+	},
+	N(na), N(nb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(na > nb);
+		Ok(B(bz))
+	},
+	S(sa), S(sb), _ => {
+		let mut bz = BitVec::new();
+		bz.push(str_cmp(sa, sb).is_gt());
+		Ok(B(bz))
+	}
 );

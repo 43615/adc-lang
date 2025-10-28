@@ -213,7 +213,7 @@ Essential commands for interacting with values already on the stack, or the stac
 
 # Array operations and indexing
 
-TODO
+Array input works by shadowing the main stack with a temporary buffer, and pushing any newly created values to that instead. This does not apply to values that are returned because of [errors](#errors).
 
 
 # Registers
@@ -266,7 +266,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
 - `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving them unchanged. Use after large operations.
-- `_clall` clears the entire current state.
+- `_clall` clears the entire current state. Thread handles are unaffected.
 
 
 ## OS commands
@@ -275,6 +275,7 @@ There are some commands that interact with the OS running the interpreter. To pr
 - `_osarch -> Sz` returns the [CPU architecture](https://doc.rust-lang.org/std/env/consts/constant.ARCH.html) of the running system.
 - `_osfamily -> Sz` returns the [OS family](https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html) of the running system.
 - `_osname -> Sz` returns the [OS name](https://doc.rust-lang.org/std/env/consts/constant.OS.html) of the running system.
+- `_pid -> NNz` returns the process ID of the interpreter process.
 - `Sa _save` saves the current state to a file specified by a path in *a*. State files are just ADC scripts that follow a special format.
 - `Sa _load` loads state file *a* if it's valid, overwriting the current state.
 - `Sa Sb _write` writes *a* to file *b*, creating/overwriting it if necessary.

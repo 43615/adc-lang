@@ -1,12 +1,13 @@
-//! Nontrivial conversions and glue
+//! Nontrivial conversions and glue for foreign types
 
-use crate::errors::FnErr::{self, *};
-use crate::structs::Value;
-use malachite::{Rational, Integer, Natural};
+use std::cmp::Ordering;
+use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::Abs;
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode;
-use std::iter::FusedIterator;
+use crate::errors::FnErr::{self, *};
+use crate::structs::Value;
+
 
 pub(crate) fn r_i1(ra: &Rational) -> Integer {
 	Integer::rounding_from(ra, RoundingMode::Down).0
@@ -49,6 +50,23 @@ pub(crate) fn f_r2(fa: f64, fb: f64) -> Result<(Rational, Rational), FnErr> {
 	Ok((f_r1(fa)?, f_r1(fb)?))
 }
 
+pub(crate) fn str_cmp(a: &str, b: &str) -> Ordering {
+	let (mut a, mut b) = (a.chars(), b.chars());
+	loop {
+		match (a.next(), b.next()) {
+			(Some(ca), Some(cb)) => {
+				match ca.cmp(&cb) {
+					Ordering::Equal => continue,
+					ord => return ord
+				}
+			},
+			(Some(_), None) => return Ordering::Greater,
+			(None, Some(_)) => return Ordering::Less,
+			(None, None) => return Ordering::Equal
+		}
+	}
+}
+
 /// Iterates through an array or promotes a plain value by repeating it endlessly. Needed for rank-polymorphy.
 pub(crate) enum PromotingIter<'a> {
 	Arr(&'a [Value], usize),
@@ -75,7 +93,7 @@ impl<'a> Iterator for PromotingIter<'a> {
 		}
 	}
 }
-impl FusedIterator for PromotingIter<'_> {}
+impl std::iter::FusedIterator for PromotingIter<'_> {}
 
 /// If both values are arrays, check if they have the same length
 pub(crate) fn lenck2(a: &Value, b: &Value) -> Result<(), FnErr> {

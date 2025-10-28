@@ -1,15 +1,12 @@
 //! Storage structs and methods
 
-use bitvec::prelude::*;
-use malachite::{Natural, Rational};
-use regex::{Regex, RegexBuilder};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, RwLock};
-use std::thread as th;
-use const_format::concatcp;
-use crate::STATE_FILE_HEADER;
+use std::sync::{Arc, RwLock, mpsc::Sender};
+use bitvec::prelude::*;
+use malachite::{Natural, Rational};
+use malachite::base::num::basic::traits::{Zero, One};
+use regex::{Regex, RegexBuilder};
 
 #[derive(Debug)]
 pub enum Value {
@@ -148,14 +145,16 @@ impl Display for Value {
 	}
 }
 
+pub type ThreadResult = (Vec<Arc<Value>>, std::io::Result<crate::ExecResult>);
+
 #[derive(Default, Debug)]
 pub struct Register {
 	/// Stack of values, [`Arc`] to allow shallow copies
 	pub v: Vec<Arc<Value>>,
 	/// Thread handle with result values, kill signal
-	pub th: Option<(th::JoinHandle<Vec<Value>>, Sender<()>)>
+	pub th: Option<(std::thread::JoinHandle<ThreadResult>, Sender<()>)>
 }
-/// Remove thread handles since they are unique
+/// Clone without thread handles since those are unique
 impl Clone for Register {
 	fn clone(&self) -> Self {
 		Self {
@@ -175,18 +174,73 @@ pub struct RegStore {
 	pub high: HashMap<Rational, Register>
 }
 impl RegStore {
-	/// get register reference, don't create a register if not present
+	/// Get register reference, don't create a register if not present
 	pub fn try_get(&self, index: &Rational) -> Option<&Register> {
 		usize::try_from(index).ok()
 			.and_then(|u| self.low.get(u))
 			.or_else(|| self.high.get(index))
 	}
 
-	/// get mutable register reference, create register if necessary
+	/// Get mutable register reference, don't create a register if not present
+	pub fn try_get_mut(&mut self, index: &Rational) -> Option<&mut Register> {
+		usize::try_from(index).ok()
+			.and_then(|u| self.low.get_mut(u))
+			.or_else(|| self.high.get_mut(index))
+	}
+
+	/// Get mutable register reference, create register if necessary
 	pub fn get_mut(&mut self, index: &Rational) -> &mut Register {
 		usize::try_from(index).ok()
 			.and_then(|u| self.low.get_mut(u))
 			.unwrap_or_else(|| self.high.entry(index.clone()).or_default())
+	}
+
+	/// Discard unused registers, reallocate used ones to fit
+	pub fn trim(&mut self) {
+		for reg in &mut self.low {
+			reg.v.shrink_to_fit();
+		}
+		self.high.retain(|_, reg| {
+			if reg.v.is_empty() {
+				reg.th.is_some()
+			}
+			else {
+				reg.v.shrink_to_fit();
+				true
+			}
+		});
+	}
+
+	/// Clear all values, don't touch thread handles in `self`
+	pub fn clear_vals(&mut self) {
+		for reg in &mut self.low {
+			reg.v = Vec::new();
+		}
+		self.high.retain(|_, reg| {
+			reg.v = Vec::new();
+			reg.th.is_some()
+		});
+		self.high.shrink_to_fit();
+	}
+
+	/// Replace values with those from `other`, keep thread handles in `self` and discard any in `other`
+	pub fn replace_vals(&mut self, mut other: Self) {
+		for (reg, oreg) in self.low.iter_mut().zip(other.low.into_iter()) {
+			reg.v = oreg.v;
+		}
+		self.high.retain(|ri, reg| {	//retain existing regs if:
+			if let Some(oreg) = other.high.remove(ri) && !oreg.v.is_empty() {	//other has one with the same index
+				reg.v = oreg.v;
+				true
+			}
+			else {	//or a thread handle
+				reg.v = Vec::new();
+				reg.th.is_some()
+			}
+		});
+		for (ori, oreg) in other.high.drain().filter(|(_, oreg)| !oreg.v.is_empty()) {	//add remaining from other
+			self.high.insert(ori, oreg);
+		}
 	}
 }
 impl Default for RegStore {
@@ -418,11 +472,135 @@ impl Utf8Iter<'_> {
 					}
 				}
 
-				0xC0 | 0xC1 | 0xF5.. => Err(format!("Invalid byte in string: [\\{b0:02X}]")),
+				0xC0 | 0xC1 | 0xF5..=0xFF => Err(format!("Impossible byte in string: [\\{b0:02X}]")),
 			}
 		}
 		else { 
 			Err(format!("Position out of bounds: {}", *pos))
+		}
+	}
+
+	/// Converts 1 or 2 [`Value`]s into a stack of macros.
+	///
+	/// Nested array traversal using heap DFS with flattening. Value types should match the syntax in the ADC manual:
+	/// - If only `top` is given, it must be a string.
+	/// - If `top` and `sec` are given and `top` is a string, `sec` is not used and should be returned to the stack.
+	/// - Otherwise, `sec` must be a string, and the number/boolean in `top` decides how often to run `sec`.
+	/// - For arrays, the nesting layout and lengths must match exactly and the contained scalars must all be either strings or non-strings as above.
+	///
+	/// `Ok` contains the macros and repetition counts in reverse (call stack) order and a flag indicating whether `sec` should be returned.
+	pub fn from_vals(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
+		use Value::*;
+		use crate::errors::TypeLabel;
+		use crate::conv::{PromotingIter, lenck2};
+		if let Some(sec) = sec {	//dyadic form
+			if let Ok(res) = Self::from_vals(top, None) { return Ok(res); }	//see if monadic form succeeds (only strings in top), continue if not
+			match (sec, top) {
+				(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//traverse nested arrays
+					if let Err(e) = lenck2(sec, top) { return Err(e.to_string()); }
+					let mut stk = vec![(PromotingIter::from(sec), PromotingIter::from(top))];
+					let mut res = Vec::new();
+
+					while let Some((ia, ib)) = stk.last_mut() {	//keep operating on the top iters
+						if let (Some(va), Some(vb)) = (ia.next(), ib.next()) {	//advance them
+							match (va, vb) {
+								(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//nested array(s)
+									if let Err(e) = lenck2(va, vb) { return Err(e.to_string()); }
+									stk.push((PromotingIter::from(va), PromotingIter::from(vb)));	//"recursive call"
+								},
+								(S(sa), B(bb)) => {
+									let nb = Natural::from(bb.count_ones());
+									if nb != Natural::ZERO {
+										res.push((sa.to_owned().into(), nb));
+									}
+								},
+								(S(sa), N(rb)) => {
+									if let Ok(nb) = Natural::try_from(rb) {
+										if nb != Natural::ZERO {
+											res.push((sa.to_owned().into(), nb));
+										}
+									}
+									else {
+										return Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)));
+									}
+								},
+								(_, S(_)) => {	//legitimate strings are already covered by monadic form attempt
+									return Err("Unexpected string in second array".into());
+								},
+								_ => {
+									return Err(format!("Expected pairs of only strings and non-strings, found {} and {} in arrays", TypeLabel::from(sec), TypeLabel::from(top)));
+								}
+							}
+						}
+						else {	//if top iters have ended
+							stk.pop();	//"return"
+						}
+					}
+
+					res.reverse();
+					Ok((res, false))
+				},
+				//scalars:
+				(S(sa), B(bb)) => {
+					let nb = Natural::from(bb.count_ones());
+					if nb != Natural::ZERO {
+						Ok((vec![(sa.to_owned().into(), nb)], false))
+					}
+					else {Ok((vec![], false))}
+				},
+				(S(sa), N(rb)) => {
+					if let Ok(nb) = Natural::try_from(rb) {
+						if nb != Natural::ZERO {
+							Ok((vec![(sa.to_owned().into(), nb)], false))
+						}
+						else {Ok((vec![], false))}
+					}
+					else {
+						Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)))
+					}
+				},
+				(_, S(_)) => {	//already covered by monadic form attempt
+					unsafe { std::hint::unreachable_unchecked() }
+				},
+				_ => {
+					Err(format!("Expected a string and a non-string, {} and {} given", TypeLabel::from(sec), TypeLabel::from(top)))
+				}
+			}
+		}
+		else {	//monadic form
+			match top {
+				A(a) => {	//traverse nested array
+					let mut stk: Vec<std::slice::Iter<Value>> = vec![a.iter()];
+					let mut res = Vec::new();
+					while let Some(i) = stk.last_mut() {	//keep operating on the top iter
+						if let Some(val) = i.next() {	//advance it
+							match val {
+								A(na) => {	//nested array encountered
+									stk.push(na.iter());	//"recursive call"
+								},
+								S(s) => {	//string encountered
+									res.push((s.to_owned().into(), Natural::ONE));
+								},
+								_ => {
+									return Err(format!("Expected only strings, found {} in array", TypeLabel::from(val)));
+								}
+							}
+						}
+						else {	//if top iter has ended
+							stk.pop();	//"return"
+						}
+					}
+					res.reverse();
+					Ok((res, true))
+				},
+				//scalar:
+				S(s) => {
+					Ok((vec![(s.to_owned().into(), Natural::ONE)], true))
+				},
+				_ => {
+					Err(format!("Expected a string, {} given", TypeLabel::from(top)))
+				}
+			}
 		}
 	}
 	
@@ -499,7 +677,7 @@ impl ParamStk {
 			unsafe { self.0.last_mut().unwrap_unchecked().0 = u; }
 			Ok(())
 		}
-		else {Err(concatcp!("Output precision must be a natural number <={}", usize::MAX))}
+		else {Err(const_format::concatcp!("Output precision must be a natural number <={}", usize::MAX))}
 	}
 
 	/// Checked edit of current input base
@@ -579,7 +757,11 @@ impl TryFrom<Vec<Params>> for ParamStk {
 /// Combined interpreter state storage
 ///
 /// Typically, just use the [`Default`]. Fields are public to allow for presets and extraction of values, see their documentation.
-#[derive(Default, Clone, Debug)]
+///
+/// `regs` may contain thread handles, which are not copied with [`Clone`]. To preserve thread handles in `self`, use:
+/// - `state.clear_vals();` instead of `state = State::default();`
+/// - `state.replace_vals(other);` instead of `state = other;`
+#[derive(Default, Debug, Clone)]
 pub struct State {
 	/// Main stack, [`Arc`] to allow shallow copies
 	pub mstk: Vec<Arc<Value>>,
@@ -593,14 +775,14 @@ pub struct State {
 /// Export to state file with standard format
 impl Display for State {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}", String::from_utf8_lossy(&STATE_FILE_HEADER))?;
-		for (lri, lreg) in self.regs.low.iter().enumerate() {
+		write!(f, "{}", String::from_utf8_lossy(&crate::STATE_FILE_HEADER))?;
+		for (lri, lreg) in self.regs.low.iter().enumerate().filter(|(_, lreg)| !lreg.v.is_empty()) {
 			for val in &lreg.v {
 				writeln!(f, "{val}")?;
 			}
 			writeln!(f, "{lri}:ff")?;
 		}
-		for (hri, hreg) in &self.regs.high {
+		for (hri, hreg) in self.regs.high.iter().filter(|(_, hreg)| !hreg.v.is_empty()) {
 			for val in &hreg.v {
 				writeln!(f, "{val}")?;
 			}
@@ -612,10 +794,10 @@ impl Display for State {
 		write!(f, "{}", {
 			let v: Vec<String> = self.params.inner().iter().map(|par| {
 				let mut ps = String::new();
-				if par.0 != DEFAULT_PARAMS.0 {ps += &format!("{}k", par.0);}
-				if par.1 != DEFAULT_PARAMS.1 {ps += &format!("{}i", par.1);}
-				if par.2 != DEFAULT_PARAMS.2 {ps += &format!("{}o", par.2);}
-				if par.3 != DEFAULT_PARAMS.3 {ps += &format!("{}m", par.3 as u8);}
+				if par.0 != DEFAULT_PARAMS.0 {ps += &format!("{{{}}}k", par.0);}
+				if par.1 != DEFAULT_PARAMS.1 {ps += &format!("{{{}}}i", par.1);}
+				if par.2 != DEFAULT_PARAMS.2 {ps += &format!("{{{}}}o", par.2);}
+				if par.3 != DEFAULT_PARAMS.3 {ps += &format!("{{{}}}m", par.3 as u8);}
 				ps
 			}).collect();
 			v.join("{")
@@ -627,8 +809,21 @@ impl State {
 	/// Reallocate all fields to fit, do not discard any stored data
 	pub fn trim(&mut self) {
 		self.mstk.shrink_to_fit();
-		self.regs.high.retain(|_, reg| !reg.v.is_empty() || reg.th.is_some());
-		self.regs.high.shrink_to_fit();
+		self.regs.trim();
 		self.params.0.shrink_to_fit();
+	}
+
+	/// Clear all stored data, do not touch thread handles in `self`
+	pub fn clear_vals(&mut self) {
+		self.mstk = Vec::new();
+		self.regs.clear_vals();
+		self.params = ParamStk::default();
+	}
+
+	/// Replace stored data with contents of `other`, keep thread handles in `self` and discard any in `other`
+	pub fn replace_vals(&mut self, other: Self) {
+		self.mstk = other.mstk;
+		self.regs.replace_vals(other.regs);
+		self.params = other.params;
 	}
 }

@@ -16,23 +16,18 @@ pub(crate) mod num;
 #[cfg(not(feature = "no_os"))]
 mod os;
 
-use lazy_static::lazy_static;
 use std::cell::LazyCell;
 use std::io::{Write, BufRead, ErrorKind};
 use std::ptr::NonNull;
 use std::str::FromStr;
-use std::sync::mpsc::{Receiver, TryRecvError, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use std::thread as th;
+use std::sync::{Arc, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
 use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
-use malachite::{Integer, Natural, Rational};
+use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{DivRem, NegAssign, Pow};
+use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
+use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, PowerOf2Digits, RoundingFrom, WrappingFrom};
 use malachite::base::num::random::RandomPrimitiveInts;
-use malachite::natural::random::get_random_natural_less_than;
-use malachite::base::num::basic::traits::{NegativeOne, One, Zero};
-use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
 use malachite::base::rational_sequences::RationalSequence;
 use malachite::base::rounding_modes::RoundingMode;
 
@@ -105,11 +100,11 @@ impl ReadLine for LineEditor {
 /// Bundle of standard IO streams, generic interface to support custom IO wrappers
 pub struct IOStreams (
 	/// Input
-	pub Box<dyn ReadLine>,
+	pub Box<dyn ReadLine + Send>,
 	/// Output
-	pub Box<dyn Write>,
+	pub Box<dyn Write + Send>,
 	/// Error
-	pub Box<dyn Write>
+	pub Box<dyn Write + Send>
 );
 impl IOStreams {
 	/// Use dummy IO streams, these do nothing
@@ -142,7 +137,7 @@ pub enum LogLevel {
 	Quiet
 }
 
-lazy_static! {
+lazy_static::lazy_static! {
 	pub(crate) static ref RE_CACHE: RegexCache = RegexCache::default();
 }
 
@@ -170,11 +165,11 @@ enum Command {
 	///impure command
 	Cmd(cmds::Cmd),
 
-	///impure command with register access
-	CmdR(cmds::CmdR),
+	///really impure (macros, IO, OS...)
+	Exec,
 
-	///`exec`-specific (macros, IO, OS...)
-	Special,
+	///impure with register access
+	ExecR,
 
 	///begin value literal
 	Lit,
@@ -199,22 +194,22 @@ const CMDS: [Command; 256] = {
 		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,
 
 		//SP		!			"			#			$			%			&			'			(			)			*			+			,			-			.			/
-		Space,		Fn1(neg),	Special,	Space,		Wrong,		Fn2(r#mod),	Wrong,		Lit,		Special,	Special,	Fn2(mul),	Fn2(add),	Wrong,		Fn2(sub),	Lit,		Fn2(div),
+		Space,		Fn1(neg),	Exec,		Space,		Wrong,		Fn2(r#mod),	Wrong,		Lit,		Exec,		Exec,		Fn2(mul),	Fn2(add),	Wrong,		Fn2(sub),	Lit,		Fn2(div),
 
 		//0			1			2			3			4			5			6			7			8			9			:			;			<			=			>			?
-		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Special,	Wrong,		Wrong,		Wrong,		Wrong,		Special,
+		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Exec,		Wrong,		Fn2(lt),	Fn2(eq),	Fn2(gt),	Exec,
 
 		//@			A			B			C			D			E			F			G			H			I			J			K			L			M			N			O
-		Lit,		Wrong,		Wrong,		Cmd(cln),	Special,	Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	Wrong,		Cmd(gk),	Wrong,		Cmd(gm),	Wrong,		Cmd(go),
+		Lit,		Wrong,		Wrong,		Cmd(cln),	Exec,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	ExecR,		Cmd(gk),	ExecR,		Cmd(gm),	Wrong,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
-		Special,	Special,	Special,	Wrong,		Lit,		Wrong,		Wrong,		Wrong,		Special,	Wrong,		CmdR(rz),	Lit,		Wrong,		Wrong,		Fn2(pow),	Special,
+		Exec,		Exec,		Exec,		ExecR,		Lit,		Wrong,		Wrong,		Wrong,		ExecR,		Wrong,		ExecR,		Lit,		Wrong,		Wrong,		Fn2(pow),	Exec,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
-		Special,	Special,	Wrong,		Cmd(cls),	Special,	Wrong,		Special,	Fn1(log),	Wrong,		Cmd(si),	Wrong,		Cmd(sk),	Wrong,		Cmd(sm),	Wrong,		Cmd(so),
+		Exec,		Exec,		Wrong,		Cmd(cls),	Exec,		Wrong,		Exec,		Fn1(log),	Wrong,		Cmd(si),	ExecR,		Cmd(sk),	ExecR,		Cmd(sm),	Wrong,		Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Special,	Special,	Cmd(rev),	Wrong,		Wrong,		Wrong,		Wrong,		Special,	Special,	Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
+		Exec,		Exec,		Cmd(rev),	ExecR,		Wrong,		Wrong,		Wrong,		Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
 
 		//~~description of what i'm doing:~~ non-ASCII:
 		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
@@ -258,6 +253,16 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 	}
 }
 
+fn reg_index_nice(ri: &Rational) -> String {
+	Natural::try_from(ri).ok().and_then(|n| {	//if ri is a natural
+		let bytes: Vec<u8> = n.to_power_of_2_digits_desc(8);	//look at its bytes
+		str::from_utf8(&bytes).ok().map(|s| String::from("[") + s + "]")	//if it parses to a string, ri was likely set from one
+	})
+		.unwrap_or_else(|| {
+			num::nauto(ri, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)	//or just return the number in canonical notation
+		})
+}
+
 /// Results of running [`interpreter`], wrappers should handle these differently
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[must_use] pub enum ExecResult {
@@ -265,10 +270,10 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 	Finished,
 
 	/// Exit of current instance requested (q), end context
-	SoftQuit(std::process::ExitCode),
+	SoftQuit(u8),
 
 	/// Complete exit requested (`q), terminate
-	HardQuit(std::process::ExitCode)
+	HardQuit(u8)
 }
 
 /// Interpreter entry point, executes ADC commands to modify state
@@ -292,7 +297,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 #[cold] #[inline(never)] pub fn interpreter(
 		st: &mut State,
 		start: Utf8Iter,
-		io: &Mutex<IOStreams>,
+		io: Arc<Mutex<IOStreams>>,
 		mut ll: LogLevel,
 		kill: Option<&Receiver<()>>,
 		mut restrict: bool
@@ -301,7 +306,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 	use ExecResult::*;
 
 	let th_name = if kill.is_some() {
-		th::current().name().unwrap().to_owned()
+		std::thread::current().name().unwrap().to_owned()
 	}
 	else {
 		String::new()
@@ -438,12 +443,12 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 							}
 							Err(e) => {
 								st.mstk.push(va);
-								valerr!(b as char, "Function '{}': {}", b as char, e);
+								valerr!(b as char, e.to_string());
 							}
 						}
 					}
 					else {
-						synerr!(b as char, "Function '{}' needs 1 argument, 0 given", b as char);
+						synerr!(b as char, "Expected 1 argument, 0 given");
 					}
 				},
 				Fn2(dya) => {
@@ -456,17 +461,17 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								Err(e) => {
 									st.mstk.push(va);
 									st.mstk.push(vb);
-									valerr!(b as char, "Function '{}': {}", b as char, e);
+									valerr!(b as char, e.to_string());
 								}
 							}
 						}
 						else {
 							st.mstk.push(vb);
-							synerr!(b as char, "Function '{}' needs 2 arguments, 1 given", b as char);
+							synerr!(b as char, "Expected 2 arguments, 1 given");
 						}
 					}
 					else {
-						synerr!(b as char, "Function '{}' needs 2 arguments, 0 given", b as char);
+						synerr!(b as char, "Expected 2 arguments, 0 given");
 					}
 				},
 				Fn3(tri) => {
@@ -481,23 +486,23 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 										st.mstk.push(va);
 										st.mstk.push(vb);
 										st.mstk.push(vc);
-										valerr!(b as char, "Function '{}': {}", b as char, e);
+										valerr!(b as char, e.to_string());
 									}
 								}
 							}
 							else {
 								st.mstk.push(vb);
 								st.mstk.push(vc);
-								synerr!(b as char, "Function '{}' needs 3 arguments, 2 given", b as char);
+								synerr!(b as char, "Expected 3 arguments, 2 given");
 							}
 						}
 						else {
 							st.mstk.push(vc);
-							synerr!(b as char, "Function '{}' needs 3 arguments, 1 given", b as char);
+							synerr!(b as char, "Expected 3 arguments, 1 given");
 						}
 					}
 					else {
-						synerr!(b as char, "Function '{}' needs 3 arguments, 0 given", b as char);
+						synerr!(b as char, "Expected 3 arguments, 0 given");
 					}
 				},
 				Cmd(cmd) => {
@@ -506,47 +511,39 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 							append!(v);
 						}
 						Err(e) => {
-							valerr!(b as char, "Command '{}': {}", b as char, e);
-						}
-					}
-				},
-				CmdR(cmdr) => {
-					let ri = if let Some(r) = rptr.take() {r}
-					else {
-						if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
-							synerr!(b as char, "Command '{}' needs a register index", b as char);
-							alt = false;
-							continue 'cmd;
-						}
-						Rational::from(
-							match mac.try_next_char() {
-								Ok(c) => {c as u32},
-								Err(e) => {
-									*count = Natural::ZERO;
-									synerr!('\0', "Aborting invalid macro: {}", e);
-									break 'cmd;
-								}
+							if let Some(se) = e.strip_suffix('!') {
+								synerr!(b as char, se);
 							}
-						)
-					};
-					match cmdr(st, &ri) {
-						Ok(mut v) => {
-							append!(v);
-						}
-						Err(e) => {
-							valerr!(b as char, "Command '{}': {}", b as char, e);
+							else {
+								valerr!(b as char, e);
+							}
 						}
 					}
 				},
-				Special => {
+				Exec => {
 					match b {
 						b'`' => {	//alt prefix
 							alt = true;
 							continue 'cmd;	//force digraph
 						},
+						b':' => {	//register pointer
+							if let Some(va) = st.mstk.pop() {
+								if let Value::N(r) = &*va {
+									rptr = Some(r.clone());
+								}
+								else {
+									let ta = errors::TypeLabel::from(&*va);
+									st.mstk.push(va);
+									synerr!(':', "Expected a number, {} given", ta);
+								}
+							}
+							else {
+								synerr!(':', "Expected 1 argument, 0 given");
+							}
+						},
 						b'd' => {
 							if let Some(v) = st.mstk.last() {
-								if let Some(p) = dest.last_mut() {
+								if let Some(p) = dest.last_mut() {	//manual shadowed push
 									unsafe {
 										p.as_mut().push((**v).clone());	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
 									}
@@ -556,7 +553,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								}
 							}
 							else {
-								synerr!('d', "Command 'd': Stack is empty");
+								synerr!('d', "Stack is empty");
 							}
 						},
 						b'D' => {
@@ -566,7 +563,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 										Ok(0) => {},	//no-op
 										Ok(u) => {
 											if let Some(from) = st.mstk.len().checked_sub(u) {
-												if let Some(p) = dest.last_mut() {
+												if let Some(p) = dest.last_mut() {	//manual shadowed append
 													for v in &st.mstk[from..] {
 														unsafe {
 															p.as_mut().push((**v).clone());	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
@@ -579,24 +576,24 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 											}
 											else {
 												st.mstk.push(va);
-												valerr!('D', "Command 'D': Can't duplicate {} values, stack depth is {}", u, st.mstk.len() - 1);
+												valerr!('D', "Can't duplicate {} values, stack depth is {}", u, st.mstk.len() - 1);
 											}
 										}
 										Err(_) => {
 											let vs = va.to_string();
 											st.mstk.push(va);
-											valerr!('D', "Command 'D': Can't possibly duplicate {} values", vs);
+											valerr!('D', "Can't possibly duplicate {} values", vs);
 										}
 									}
 								}
 								else {
 									let ta = errors::TypeLabel::from(&*va);
 									st.mstk.push(va);
-									synerr!('D', "Command 'D' needs a number, {} given", ta);
+									synerr!('D', "Expected a number, {} given", ta);
 								}
 							}
 							else {
-								synerr!('D', "Command 'D' needs 1 argument, 0 given");
+								synerr!('D', "Expected 1 argument, 0 given");
 							}
 						},
 						b'R' => {	//rotate
@@ -605,30 +602,30 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 									match usize::try_from(r) {
 										Ok(0) => {},	//no-op
 										Ok(u) => {
-											if let Some(slice) = st.mstk.rchunks_exact_mut(u).next() {
-												if alt {slice.rotate_left(1);}
-												else {slice.rotate_right(1);}
+											if let Some(from) = st.mstk.len().checked_sub(u) {
+												if alt {st.mstk[from..].rotate_left(1);}
+												else {st.mstk[from..].rotate_right(1);}
 											}
 											else {
 												st.mstk.push(va);
-												valerr!('R', "Command 'R': Can't rotate {} values, stack depth is {}", u, st.mstk.len() - 1);
+												valerr!('R', "Can't rotate {} values, stack depth is {}", u, st.mstk.len() - 1);
 											}
 										}
 										Err(_) => {
 											let vs = va.to_string();
 											st.mstk.push(va);
-											valerr!('R', "Command 'R': Can't possibly rotate {} values", vs);
+											valerr!('R', "Can't possibly rotate {} values", vs);
 										}
 									}
 								}
 								else {
 									let ta = errors::TypeLabel::from(&*va);
 									st.mstk.push(va);
-									synerr!('R', "Command 'R' needs a number, {} given", ta);
+									synerr!('R', "Expected a number, {} given", ta);
 								}
 							}
 							else {
-								synerr!('R', "Command 'R' needs 1 argument, 0 given");
+								synerr!('R', "Expected 1 argument, 0 given");
 							}
 						},
 						b'?' => {	//read line
@@ -640,7 +637,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								Err(e) => {
 									match e.kind() {
 										ErrorKind::Interrupted => {
-											valerr!('?', "Command '?': Interrupted");
+											valerr!('?', "Interrupted");
 										},
 										ErrorKind::UnexpectedEof => {
 											push!(Value::S(String::new()));
@@ -666,7 +663,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								}
 							}
 							else {
-								synerr!('p', "Command 'p' needs 1 argument, 0 given");
+								synerr!('p', "Expected 1 argument, 0 given");
 							}
 						},
 						b'P' => {	//print top
@@ -682,7 +679,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								}
 							}
 							else {
-								synerr!('P', "Command 'P' needs 1 argument, 0 given");
+								synerr!('P', "Expected 1 argument, 0 given");
 							}
 						},
 						b'"' => {	//toggle pbuf
@@ -714,13 +711,40 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								synerr!(')', "Mismatched closing ')'");
 							}
 						},
+						b'x' => {
+							if let Some(top) = st.mstk.pop() {
+								let sec = st.mstk.pop();
+								match Utf8Iter::from_vals(&top, sec.as_deref()) {
+									Ok((mut stk, ret)) => {
+										if let Some(sec) = sec && ret {	//sec was not used, return
+											st.mstk.push(sec);
+										}
+
+										if mac.is_finished() && *count == Natural::ZERO {	//tail call optimization: discard current macro if finished
+											call.pop();
+										}
+
+										call.append(&mut stk);
+										continue 'mac;
+									},
+									Err(e) => {
+										if let Some(sec) = sec {st.mstk.push(sec);}
+										st.mstk.push(top);
+										synerr!('x', "{}", e);
+									}
+								}
+							}
+							else {
+								synerr!('x', "Expected 1 or 2 arguments, 0 given");
+							}
+						},
 						b'q' => {
 							let u = u8::wrapping_from(&Integer::rounding_from(rptr.unwrap_or_default(), RoundingMode::Down).0);
 							return if alt {
-								Ok(HardQuit(u.into()))
+								Ok(HardQuit(u))
 							}
 							else {
-								Ok(SoftQuit(u.into()))
+								Ok(SoftQuit(u))
 							};
 						},
 						b'Q' => {
@@ -736,20 +760,20 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 											continue 'mac;
 										}
 										else {
-											let s = va.to_string();
+											let vs = va.to_string();
 											st.mstk.push(va);
-											valerr!('Q', "Command 'Q': Cannot possibly break {} macros", s);
+											valerr!('Q', "Cannot possibly break {} macros", vs);
 										}
 									},
 									_ => {
-										let t = errors::TypeLabel::from(&*va);
+										let ta = errors::TypeLabel::from(&*va);
 										st.mstk.push(va);
-										synerr!('Q', "Command 'Q' needs a number, {} given", t);
+										synerr!('Q', "Expected a number, {} given", ta);
 									}
 								}
 							}
 							else {
-								synerr!('Q', "Command 'Q' needs 1 argument, 0 given");
+								synerr!('Q', "Expected 1 argument, 0 given");
 							}
 						},
 						b'a' => {	//array commands
@@ -760,12 +784,12 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 											todo!()
 										},
 										_ => {
-											synerr!('a', "Invalid array command: 'a{}'", b as char);
+											synerr!('a', "Invalid array command 'a{}'", b as char);
 										}
 									}
 								},
 								Some(_) | None => {
-									synerr!('a', "Incomplete array command: 'a'");
+									synerr!('a', "Incomplete array command 'a'");
 								}
 							}
 						},
@@ -785,36 +809,36 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 													match usize::try_from(r) {
 														Ok(0) => {},	//no-op
 														Ok(u) => {
-															if let Some(slice) = st.mstk.rchunks_exact_mut(u).next() {
-																slice.reverse();
+															if let Some(from) = st.mstk.len().checked_sub(u) {
+																st.mstk[from..].reverse();
 															}
 															else {
 																st.mstk.push(va);
-																valerr!('f', "Command 'fR': Can't reverse {} values, stack depth is {}", u, st.mstk.len() - 1);
+																valerr!('f', "Can't reverse {} values, stack depth is {}", u, st.mstk.len() - 1);
 															}
 														}
 														Err(_) => {
 															let vs = va.to_string();
 															st.mstk.push(va);
-															valerr!('f', "Command 'fR': Can't possibly reverse {} values", vs);
+															valerr!('f', "Can't possibly reverse {} values", vs);
 														}
 													}
 												}
 												else {
 													let ta = errors::TypeLabel::from(&*va);
 													st.mstk.push(va);
-													synerr!('f', "Command 'fR' needs a number, {} given", ta);
+													synerr!('f', "Expected a number, {} given", ta);
 												}
 											}
 											else {
-												synerr!('f', "Command 'fR' needs 1 argument, 0 given");
+												synerr!('f', "Expected 1 argument, 0 given");
 											}
 										},
 										b'f' => {	//swap with reg
 											let ri = if let Some(r) = rptr.take() {r}
 											else {
 												if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
-													synerr!('f', "Command 'ff' needs a register index");
+													synerr!('f', "No register index");
 													alt = false;
 													continue 'cmd;
 												}
@@ -847,12 +871,12 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 											}
 										},
 										_ => {
-											synerr!('f', "Invalid stack command: 'f{}'", b as char);
+											synerr!('f', "Invalid stack command 'f{}'", b as char);
 										}
 									}
 								},
 								Some(_) | None => {
-									synerr!('f', "Incomplete stack command: 'f'");
+									synerr!('f', "Incomplete stack command 'f'");
 								}
 							}
 						},
@@ -863,18 +887,20 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 										Value::N(r) => {
 											match Natural::try_from(r) {
 												Ok(n) => {
-													push!(Value::N(Rational::from(get_random_natural_less_than(&mut rng, &n))));
+													push!(Value::N(Rational::from(
+														malachite::natural::random::get_random_natural_less_than(&mut rng, &n)
+													)));
 												},
 												_ => {
 													st.mstk.push(va);
-													valerr!('N', "Command 'N': Limit must be a natural number");
+													valerr!('N', "Limit must be a natural number");
 												}
 											}
 										},
 										_ => {
 											let t = errors::TypeLabel::from(&*va);
 											st.mstk.push(va);
-											synerr!('N', "Command 'N' needs a number, {} given", t);
+											synerr!('N', "Expected a number, {} given", t);
 										}
 									}
 								}
@@ -893,22 +919,19 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 												},
 												_ => {
 													st.mstk.push(va);
-													valerr!('N', "Command '`N': Seed must be a natural number or `1");
+													valerr!('N', "Seed must be a natural number or `1");
 												}
 											}
 										},
 										_ => {
 											let t = errors::TypeLabel::from(&*va);
 											st.mstk.push(va);
-											synerr!('N', "Command '`N' needs a number, {} given", t);
+											synerr!('N', "Expected a number, {} given", t);
 										}
 									}
 								}
-								(None, false) => {
-									synerr!('N', "Command 'N' needs 1 argument, 0 given");
-								},
-								(None, true) => {
-									synerr!('N', "Command '`N' needs 1 argument, 0 given");
+								(None, _) => {
+									synerr!('N', "Expected 1 argument, 0 given");
 								}
 							}
 						},
@@ -919,7 +942,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 										let (s, ns) = n.div_rem(Natural::const_from(1_000_000_000));
 										u64::try_from(&s).ok().map(|s| {
 											let ns = unsafe { u32::try_from(&ns).unwrap_unchecked() };	//SAFETY: remainder always fits
-											Duration::new(s, ns)
+											std::time::Duration::new(s, ns)
 										})
 									}) {
 										if let Some(rx) = kill {
@@ -936,7 +959,7 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 											}
 										}
 										else {
-											th::sleep(dur);	//no kill receiver, just sleep
+											std::thread::sleep(dur);	//no kill receiver, just sleep
 										}
 									}
 									else {
@@ -948,11 +971,11 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 								else {
 									let ta = crate::errors::TypeLabel::from(&*va);
 									st.mstk.push(va);
-									synerr!('w', "Command 'w' needs a number, {} given", ta);
+									synerr!('w', "Expected a number, {} given", ta);
 								}
 							}
 							else {
-								synerr!('w', "Command 'w' needs 1 argument, 0 given");
+								synerr!('w', "Expected 1 argument, 0 given");
 							}
 						},
 						b'_' => {	//word commands
@@ -1006,12 +1029,13 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 									st.params = ParamStk::default();
 								},
 								b"clall" => {
-									*st = State::default();
+									st.clear_vals();
+									RE_CACHE.clear();
 								},
 								_ => {
 									#[cfg(feature = "no_os")]
 									{
-										synerr!('_', "Invalid word command: '{}'", string_or_bytes(&word));
+										synerr!('_', "Invalid word command '{}'", string_or_bytes(&word));
 									}
 									#[cfg(not(feature = "no_os"))]
 									{
@@ -1022,19 +1046,200 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 														append!(v);
 													}
 													Err(e) => {
-														valerr!('_', "OS command '{}': {}", string_or_bytes(&word), e);
+														if let Some(se) = e.strip_suffix('!') {
+															synerr!('_', "OS command '{}': {}", string_or_bytes(&word), se);
+														}
+														else {
+															valerr!('_', "OS command '{}': {}", string_or_bytes(&word), e);
+														}
 													}
 												}
 											}
 											(true, Some(_)) => {
-												valerr!('_', "OS command '{}' is disabled (restricted mode)", string_or_bytes(&word));
+												synerr!('_', "OS command '{}' is disabled (restricted mode)", string_or_bytes(&word));
 											},
 											_ => {
-												synerr!('_', "Invalid word command: '{}'", string_or_bytes(&word));
+												synerr!('_', "Invalid word command '{}'", string_or_bytes(&word));
 											}
 										}
 									}
 								}
+							}
+						},
+						_ => unreachable!()
+					}
+				},
+				ExecR => {
+					let ri = if let Some(r) = rptr.take() {r}
+					else {
+						if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
+							synerr!(b as char, "No register index");
+							alt = false;
+							continue 'cmd;
+						}
+						Rational::from(
+							match mac.try_next_char() {
+								Ok(c) => {c as u32},
+								Err(e) => {
+									*count = Natural::ZERO;
+									synerr!('\0', "Aborting invalid macro: {}", e);
+									break 'cmd;
+								}
+							}
+						)
+					};
+					match b {
+						b'Z' => {	//stack depth
+							push!(Value::N(
+								st.regs.try_get(&ri).map(|reg| reg.v.len().into()).unwrap_or_default()
+							));
+						},
+						b's' => {
+							if let Some(va) = st.mstk.pop() {
+								let reg = st.regs.get_mut(&ri);
+								if let Some(rv) = reg.v.last_mut() {
+									*rv = va;
+								}
+								else {
+									reg.v.push(va);
+								}
+							}
+							else {
+								synerr!('s', "Stack is empty");
+							}
+						},
+						b'S' => {
+							if let Some(va) = st.mstk.pop() {
+								st.regs.get_mut(&ri).v.push(va);
+							}
+							else {
+								synerr!('S', "Stack is empty");
+							}
+						},
+						b'l' => {
+							if let Some(rv) = st.regs.try_get(&ri).and_then(|reg| reg.v.last()) {
+								if let Some(p) = dest.last_mut() {	//manual shadowed push
+									unsafe {
+										p.as_mut().push((**rv).clone());	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
+									}
+								}
+								else {
+									st.mstk.push(Arc::clone(rv));
+								}
+							}
+							else {
+								synerr!('l', "Register {} is empty", reg_index_nice(&ri));
+							}
+						},
+						b'L' => {
+							if let Some(rv) = st.regs.try_get_mut(&ri).and_then(|reg| reg.v.pop()) {
+								if let Some(p) = dest.last_mut() {	//manual shadowed push
+									unsafe {
+										p.as_mut().push((*rv).clone());	//SAFETY: `NonNull`s point to nested arrays in abuf, only one is accessed at a time
+									}
+								}
+								else {
+									st.mstk.push(Arc::clone(&rv));
+								}
+							}
+							else {
+								synerr!('L', "Register {} is empty", reg_index_nice(&ri));
+							}
+						},
+						b'X' => {
+							if let Some(true) = st.regs.try_get(&ri).map(|reg| reg.th.is_some()) {
+								valerr!('X', "Register {} is already running a thread", reg_index_nice(&ri));
+							}
+							else if let Some(top) = st.mstk.pop() {
+								let sec = st.mstk.pop();
+								match Utf8Iter::from_vals(&top, sec.as_deref()) {
+									Ok((stk, ret)) => {
+										if let Some(sec) = sec && ret {	//sec was not used, return
+											st.mstk.push(sec);
+										}
+
+										let (tx, rx) = std::sync::mpsc::channel::<()>();
+										let tb = std::thread::Builder::new().name(format!("{th_name}{}: ", reg_index_nice(&ri)));
+										let mut th_st = if alt { st.clone() } else { State::default() };
+										let th_io = Arc::clone(&io);
+
+										match tb.spawn(move || {
+											let mut th_res = (Vec::new(), Ok(Finished));
+
+											'all: for (th_start, th_count) in stk {
+												for _ in malachite::natural::exhaustive::exhaustive_natural_range(Natural::ZERO, th_count) {
+													match interpreter(&mut th_st, th_start.clone(), Arc::clone(&th_io), ll, Some(&rx), true) {
+														Ok(Finished) => {continue;},
+														Ok(er) => {
+															th_res.1 = Ok(er);
+															break 'all;
+														},
+														Err(e) => {
+															th_res.1 = Err(e);
+															break 'all;
+														}
+													}
+												}
+											}
+
+											th_res.0 = th_st.mstk;
+											th_res
+										}) {
+											Ok(jh) => {
+												st.regs.get_mut(&ri).th = Some((jh, tx));
+											},
+											Err(e) => {
+												valerr!('X', "Can't spawn child thread: {}", e);
+											}
+										}
+									},
+									Err(e) => {
+										if let Some(sec) = sec {st.mstk.push(sec);}
+										st.mstk.push(top);
+										synerr!('X', "{}", e);
+									}
+								}
+							}
+							else {
+								synerr!('X', "Expected 1 or 2 arguments, 0 given");
+							}
+						},
+						b'j' => {
+							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some((jh, tx)) = reg.th.take() {
+								if alt {
+									tx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+								}
+								match jh.join() {
+									Ok(mut res) => {
+										match res.1 {
+											Err(e) => {
+												valerr!('j', "IO error in thread {}: {}", reg_index_nice(&ri), e);
+											},
+											Ok(SoftQuit(c)) | Ok(HardQuit(c)) if c != 0 => {
+												valerr!('j', "Thread {} exited with code {}", reg_index_nice(&ri), c);
+											},
+											_ => {}
+										}
+
+										reg.v.append(&mut res.0);
+									},
+									Err(e) => {
+										std::panic::resume_unwind(e);
+									}
+								}
+							}
+							else {
+								valerr!('j', "Register {} is not running a thread", reg_index_nice(&ri));
+							}
+						},
+						b'J' => {
+							if let Some(Some((jh, _))) = st.regs.try_get(&ri).map(|reg| &reg.th) {
+								let mut bz = BitVec::new();
+								bz.push(jh.is_finished());
+								push!(Value::B(bz));
+							}
+							else {
+								valerr!('J', "Register {} is not running a thread", reg_index_nice(&ri));
 							}
 						},
 						_ => unreachable!()
