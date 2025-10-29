@@ -380,10 +380,7 @@ cmd!(getdir, _st {
 });
 
 cmd!(homedir, _st {
-	match std::env::home_dir() {
-		Some(path) => {Ok(vec![Value::S(path.to_string_lossy().into())])},
-		None => {Err("Current home directory is unknown".into())}
-	}
+	Ok(vec![Value::S(std::env::home_dir().unwrap_or_default().to_string_lossy().into())])
 });
 
 cmd!(tempdir, _st {
