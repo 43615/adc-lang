@@ -16,7 +16,6 @@ pub(crate) mod num;
 #[cfg(not(feature = "no_os"))]
 mod os;
 
-use std::cell::LazyCell;
 use std::io::{Write, BufRead, ErrorKind};
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -30,6 +29,8 @@ use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIte
 use malachite::base::num::random::RandomPrimitiveInts;
 use malachite::base::rational_sequences::RationalSequence;
 use malachite::base::rounding_modes::RoundingMode;
+use crate::errors::TypeLabel;
+
 
 /// Added at the start of saved state files
 pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
@@ -200,7 +201,7 @@ const CMDS: [Command; 256] = {
 		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Exec,		Wrong,		Fn2(lt),	Fn2(eq),	Fn2(gt),	Exec,
 
 		//@			A			B			C			D			E			F			G			H			I			J			K			L			M			N			O
-		Lit,		Wrong,		Wrong,		Cmd(cln),	Exec,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	ExecR,		Cmd(gk),	ExecR,		Cmd(gm),	Wrong,		Cmd(go),
+		Lit,		Wrong,		Wrong,		Cmd(cln),	Exec,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	ExecR,		Cmd(gk),	ExecR,		Cmd(gm),	Exec,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
 		Exec,		Exec,		Exec,		ExecR,		Lit,		Wrong,		Wrong,		Wrong,		ExecR,		Wrong,		ExecR,		Lit,		Wrong,		Wrong,		Fn2(pow),	Exec,
@@ -322,6 +323,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 				let err = &mut io.lock().unwrap().2;
 				writeln!(err, "! {th_name}{}: {}", $c, $s)?;
 				err.flush()?;
+				//drop lock
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
 		};
@@ -331,6 +333,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 				let err = &mut io.lock().unwrap().2;
 				writeln!(err, "! {th_name}{}: {}", $c, s)?;
 				err.flush()?;
+				//drop lock
 			}
 			elatch = Some((Natural::ZERO, $c, s));
 		};
@@ -342,6 +345,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 				let err = &mut io.lock().unwrap().2;
 				writeln!(err, "? {th_name}{}: {}", $c, $s)?;
 				err.flush()?;
+				//drop lock
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
 		};
@@ -351,31 +355,34 @@ fn reg_index_nice(ri: &Rational) -> String {
 				let err = &mut io.lock().unwrap().2;
 				writeln!(err, "? {th_name}{}: {}", $c, s)?;
 				err.flush()?;
+				//drop lock
 			}
 			elatch = Some((Natural::ZERO, $c, s));
 		};
 	}
 
-	/*macro_rules! debug {
+	macro_rules! debug {
     	($s:expr) => {
 			if ll == LogLevel::Debug {
 				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "DEBUG: {th_name}{}", $s)?;
+				writeln!(err, "\tDEBUG: {th_name}{}", $s)?;
 				err.flush()?;
+				//drop lock
 			}
 		};
 		($f:literal, $($s:expr),*) => {
 			if ll == LogLevel::Debug {
 				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "DEBUG: {th_name}{}", format!($f, $($s),*))?;
+				writeln!(err, "\tDEBUG: {th_name}{}", format!($f, $($s),*))?;
 				err.flush()?;
+				//drop lock
 			}
 		};
-	}*/
+	}
 
 	let mut rptr: Option<Rational> = None;	//allow setting by a macro
 
-	let mut rng = LazyCell::new(rng_os);
+	let mut rng: Option<RandomPrimitiveInts<u64>> = None;
 
 	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::const_from(1))];
 
@@ -437,6 +444,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 			match byte_cmd(b) {
 				Fn1(mon) => {
 					if let Some(va) = st.mstk.pop() {
+						debug!("Monadic {}{} with {}", if alt {"alt-"} else {""}, b as char, TypeLabel::from(&*va));
 						match fns::exec1(mon, &va, alt) {
 							Ok(vz) => {
 								push!(vz);
@@ -454,6 +462,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 				Fn2(dya) => {
 					if let Some(vb) = st.mstk.pop() {
 						if let Some(va) = st.mstk.pop() {
+							debug!("Dyadic {}{} with ({}, {})", if alt {"alt-"} else {""}, b as char, TypeLabel::from(&*va), TypeLabel::from(&*vb));
 							match fns::exec2(dya, &va, &vb, alt) {
 								Ok(vz) => {
 									push!(vz);
@@ -478,6 +487,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 					if let Some(vc) = st.mstk.pop() {
 						if let Some(vb) = st.mstk.pop() {
 							if let Some(va) = st.mstk.pop() {
+								debug!("Triadic {}{} with ({}, {}, {})", if alt {"alt-"} else {""}, b as char, TypeLabel::from(&*va), TypeLabel::from(&*vb), TypeLabel::from(&*vc));
 								match fns::exec3(tri, &va, &vb, &vc, alt) {
 									Ok(vz) => {
 										push!(vz);
@@ -506,6 +516,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 					}
 				},
 				Cmd(cmd) => {
+					debug!("Impure command {}", b as char);
 					match cmd(st) {
 						Ok(mut v) => {
 							append!(v);
@@ -521,6 +532,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 					}
 				},
 				Exec => {
+					debug!("Special command {}", b as char);
 					match b {
 						b'`' => {	//alt prefix
 							alt = true;
@@ -532,7 +544,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 									rptr = Some(r.clone());
 								}
 								else {
-									let ta = errors::TypeLabel::from(&*va);
+									let ta = TypeLabel::from(&*va);
 									st.mstk.push(va);
 									synerr!(':', "Expected a number, {} given", ta);
 								}
@@ -587,7 +599,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 									}
 								}
 								else {
-									let ta = errors::TypeLabel::from(&*va);
+									let ta = TypeLabel::from(&*va);
 									st.mstk.push(va);
 									synerr!('D', "Expected a number, {} given", ta);
 								}
@@ -619,7 +631,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 									}
 								}
 								else {
-									let ta = errors::TypeLabel::from(&*va);
+									let ta = TypeLabel::from(&*va);
 									st.mstk.push(va);
 									synerr!('R', "Expected a number, {} given", ta);
 								}
@@ -629,7 +641,11 @@ fn reg_index_nice(ri: &Rational) -> String {
 							}
 						},
 						b'?' => {	//read line
-							let res = {io.lock().unwrap().0.read_line()};	//drop lock
+							let res = {
+								let inp = &mut io.lock().unwrap().0;
+								inp.read_line()
+								//drop lock
+							};
 							match res {
 								Ok(s) => {
 									push!(Value::S(s));
@@ -660,6 +676,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 									let out = &mut io.lock().unwrap().1;
 									writeln!(out, "{}", vs)?;
 									out.flush()?;
+									//drop lock
 								}
 							}
 							else {
@@ -676,6 +693,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 									let out = &mut io.lock().unwrap().1;
 									write!(out, "{}", vs)?;
 									out.flush()?;
+									//drop lock
 								}
 							}
 							else {
@@ -766,7 +784,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 										}
 									},
 									_ => {
-										let ta = errors::TypeLabel::from(&*va);
+										let ta = TypeLabel::from(&*va);
 										st.mstk.push(va);
 										synerr!('Q', "Expected a number, {} given", ta);
 									}
@@ -825,7 +843,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 													}
 												}
 												else {
-													let ta = errors::TypeLabel::from(&*va);
+													let ta = TypeLabel::from(&*va);
 													st.mstk.push(va);
 													synerr!('f', "Expected a number, {} given", ta);
 												}
@@ -888,7 +906,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 											match Natural::try_from(r) {
 												Ok(n) => {
 													push!(Value::N(Rational::from(
-														malachite::natural::random::get_random_natural_less_than(&mut rng, &n)
+														malachite::natural::random::get_random_natural_less_than(rng.get_or_insert(rng_os()), &n)
 													)));
 												},
 												_ => {
@@ -898,9 +916,9 @@ fn reg_index_nice(ri: &Rational) -> String {
 											}
 										},
 										_ => {
-											let t = errors::TypeLabel::from(&*va);
+											let ta = TypeLabel::from(&*va);
 											st.mstk.push(va);
-											synerr!('N', "Expected a number, {} given", t);
+											synerr!('N', "Expected a number, {} given", ta);
 										}
 									}
 								}
@@ -909,13 +927,13 @@ fn reg_index_nice(ri: &Rational) -> String {
 										Value::N(r) => {
 											match Integer::try_from(r) {
 												Ok(Integer::NEGATIVE_ONE) => {	//return to os seed
-													rng = LazyCell::new(rng_os);
+													rng = Some(rng_os());
 												},
 												Ok(i) if Natural::convertible_from(&i) => {	//custom seed
 													let n= unsafe { Natural::try_from(i).unwrap_unchecked() };	//SAFETY: just checked
 													let mut bytes: Vec<u8> = PowerOf2DigitIterable::<u8>::power_of_2_digits(&n, 8).take(32).collect();
 													bytes.resize(32, 0);
-													*rng = rng_preset( unsafe { <[u8; 32]>::try_from(bytes).unwrap_unchecked() } );
+													rng = Some(rng_preset( unsafe { <[u8; 32]>::try_from(bytes).unwrap_unchecked() } ));
 												},
 												_ => {
 													st.mstk.push(va);
@@ -924,9 +942,9 @@ fn reg_index_nice(ri: &Rational) -> String {
 											}
 										},
 										_ => {
-											let t = errors::TypeLabel::from(&*va);
+											let ta = TypeLabel::from(&*va);
 											st.mstk.push(va);
-											synerr!('N', "Expected a number, {} given", t);
+											synerr!('N', "Expected a number, {} given", ta);
 										}
 									}
 								}
@@ -969,7 +987,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 									}
 								}
 								else {
-									let ta = crate::errors::TypeLabel::from(&*va);
+									let ta = TypeLabel::from(&*va);
 									st.mstk.push(va);
 									synerr!('w', "Expected a number, {} given", ta);
 								}
@@ -1088,6 +1106,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 							}
 						)
 					};
+					debug!("Special register command {}", b as char);
 					match b {
 						b'Z' => {	//stack depth
 							push!(Value::N(
@@ -1248,6 +1267,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 				Lit => {
 					match b {
 						b'T' | b'F' => {	//booleans
+							debug!("Boolean literal");
 							let mut bits = BitVec::new();
 							bits.push(b == b'T');
 							while let Some(b) = mac.next() {
@@ -1263,6 +1283,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 							push!(Value::B(bits));
 						},
 						b'\'' | b'0'..=b'9' | b'.' | b'@' => {	//numbers
+							debug!("Number literal");
 							let mut ipart = Vec::new();
 							let mut fpart = Vec::new();
 							let mut rpart = Vec::new();
@@ -1524,6 +1545,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 							}
 						},
 						b'[' => {	//strings
+							debug!("String literal");
 							let mut bytes = Vec::new();
 							let mut discard = false;
 							let mut nest = 1usize;
@@ -1612,6 +1634,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 					}
 				},
 				Space if b == b'#' => {	//line comment
+					debug!("Line comment, skipping until LF");
 					mac.find(|b| *b == b'\n');
 				},
 				Space => {

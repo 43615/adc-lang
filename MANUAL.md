@@ -252,7 +252,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `` `j⒭ `` kills the thread. The child interpreter polls the kill signal when parsing commands or sleeping with `w`. Also pushes the stack to the register.
 - `J⒭ -> BBz` returns `T` if the thread is finished and can be joined immediately.
 - Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand-)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th -> Sz`.
-- [OS commands](#os-commands) are disabled in child threads to prevent data races, corruption of OS resources, and being unkillable while running child processes. [IO streams](#input-and-output) are safely shared using a mutex (note that `?` is a blocking operation).
+- [OS commands](#os-commands) are disabled in child threads to prevent any corruption of OS resources. [IO streams](#input-and-output) are safely shared using a mutex (note that `?` is a blocking operation).
 
 
 # Other commands
@@ -269,19 +269,46 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `_clall` clears the entire current state. Thread handles are unaffected.
 
 
-## OS commands
+# OS commands
 
-There are some commands that interact with the OS running the interpreter. To protect against untrusted input, these may be disabled with "restricted mode" (**CLI:** `-r` flag), the `_restrict` command (one-way), or by building the crate with the `no_os` feature enabled.
+There is a suite of commands that interact with the OS running the interpreter. To protect against untrusted input, these may be disabled with "restricted mode" (**CLI:** `-r` flag), the `_restrict` command (one-way), or by building the crate with the `no_os` feature enabled.
+
+Most strings involved here are not guaranteed to be valid UTF-8. When saving outputs as ADC values, they are converted in an infallible but "lossy" manner where invalid sequences are replaced with `U+FFFD REPLACEMENT CHARACTER` (�).
+
+
+## Environment access
+
 - `_osarch -> Sz` returns the [CPU architecture](https://doc.rust-lang.org/std/env/consts/constant.ARCH.html) of the running system.
 - `_osfamily -> Sz` returns the [OS family](https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html) of the running system.
 - `_osname -> Sz` returns the [OS name](https://doc.rust-lang.org/std/env/consts/constant.OS.html) of the running system.
 - `_pid -> NNz` returns the process ID of the interpreter process.
+- `Sa Sb _setvar` sets the environment variable *a* to the value *b*, clearing it if empty.
+- `Sa _getvar -> Sz` reads the environment variable *a*, empty string if unset.
+- `Sa _setdir` changes the interpreter's working directory to path *a*.
+- `_getdir -> Sz` returns the current working directory.
+- `_homedir -> Sz` returns the executing user's home directory, empty string if unknown.
+- `_tempdir -> Sz` returns a path to a temporary directory.
+
+
+## File operations
+
 - `Sa _save` saves the current state to a file specified by a path in *a*. State files are just ADC scripts that follow a special format.
 - `Sa _load` loads state file *a* if it's valid, overwriting the current state.
 - `Sa Sb _write` writes *a* to file *b*, creating/overwriting it if necessary.
 - `Sa Sb _append` appends *a* to the end of file *b*, creating it if necessary.
 - `Sa _read -> Sz` reads file *a* into a string, erroring if it doesn't exist.
-- TODO
+
+
+## Process execution
+
+- An OS command consists of an executable name/path with arguments separated by spaces. Any initial words containing `=` are interpreted as environment variables and set for the child process.
+- Child processes inherit the interpreter's environment variables and working directory.
+- Waiting for child processes to finish blocks the interpreter. Unexpectedly non-terminating processes need to be dealt with by other OS-specific means.
+- `Sa Sb _run -> (NNx Sy Sz)` runs OS command *a* as a child process using *b* as stdin, waiting for it to finish. *x* is the exit code, *y* and *z* are stdout and stderr.
+- `Sa Sb _spawn -> NNz` spawns the process but doesn't wait for it to finish, instead returning its process ID. The following commands can only control processes that were created in this way by the current interpreter.
+- `NNa _wait -> (NNx Sy Sz)` waits for PID *a* to exit and returns its output.
+- `NNa _exited -> BBz` returns `T` if the process has exited.
+- `NNa _kill -> (NNx Sy Sz)` kills the process immediately and returns its output.
 
 
 # Errors

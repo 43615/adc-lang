@@ -250,9 +250,12 @@ fn main() -> ExitCode {
 						let out = &mut io.lock().unwrap().1;
 						if let Err(c) = out.write_all(prompt.as_bytes()).map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
 						if let Err(c) = out.flush().map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
+						//drop lock
 					}
 					let mut res = {
-						io.lock().unwrap().0.read_line().map_err(|e| e.kind())
+						let inp = &mut io.lock().unwrap().0;
+						inp.read_line().map_err(|e| e.kind())
+						//drop lock
 					};
 					if res == Err(ErrorKind::UnexpectedEof) {res = Ok(String::new())};	//replace with empty string
 					
