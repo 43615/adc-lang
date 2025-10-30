@@ -209,7 +209,7 @@ cmd!(load, st {
 								let mut new_st = State::default();
 								let no_io = std::sync::Arc::new(std::sync::Mutex::new(crate::IOStreams::empty()));
 								
-								let res = crate::interpreter(&mut new_st, st_mac, no_io, crate::LogLevel::Quiet, None, true);	//one recursive call as a treat
+								let res = crate::interpreter_no_os(&mut new_st, st_mac, no_io, crate::LogLevel::Quiet, None);	//one recursive call as a treat
 								
 								if !matches!(res, Ok(crate::ExecResult::Finished)) {
 									let name = name.to_owned();

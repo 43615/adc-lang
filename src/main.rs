@@ -120,7 +120,7 @@ fn main() -> ExitCode {
 	use Action::*;
 
 	let mut acts = Vec::new();
-	let mut strict = false;
+	let mut restrict = false;
 	let mut ll = LogLevel::Normal;
 
 	fn try_reading_fd(name: &str) -> Result<File, ExitCode> {
@@ -209,7 +209,7 @@ fn main() -> ExitCode {
 				}
 			}
 
-			Flag('r') => { strict = true; }
+			Flag('r') => { restrict = true; }
 			Flag('d') => {
 				if ll == LogLevel::Quiet { return syntax_error("Debug and Quiet modes are incompatible".into()); }
 				ll = LogLevel::Debug;
@@ -263,7 +263,7 @@ fn main() -> ExitCode {
 						Ok(line) => {
 							let start = Utf8Iter::from(line.as_bytes());
 
-							let res = interpreter(&mut st, start, Arc::clone(&io), ll, None, strict);
+							let res = unsafe { interpreter(&mut st, start, Arc::clone(&io), ll, None, restrict) };
 
 							match res {
 								Ok(Finished) => {continue 'repl;}
@@ -285,7 +285,7 @@ fn main() -> ExitCode {
 			Macro(mac) => {
 				let start = Utf8Iter::from(mac.as_bytes());
 
-				let res = interpreter(&mut st, start, Arc::clone(&io), ll, None, strict);
+				let res = unsafe { interpreter(&mut st, start, Arc::clone(&io), ll, None, restrict) };
 
 				match res {
 					Ok(Finished) => {continue 'act;}
@@ -299,7 +299,7 @@ fn main() -> ExitCode {
 				if let Err(c) = fd.read_to_end(&mut script).map_err(|e| {runtime_error(format!("Can't read from script file: {e}"))}) {return c;}
 				let start = Utf8Iter::from(script);
 
-				let res = interpreter(&mut st, start, Arc::clone(&io), ll, None, strict);
+				let res = unsafe { interpreter(&mut st, start, Arc::clone(&io), ll, None, restrict) };
 
 				match res {
 					Ok(Finished) => {continue 'act;}
@@ -324,7 +324,7 @@ fn main() -> ExitCode {
 				let mut nst = State::default();
 				let no_io = Arc::new(Mutex::new(IOStreams::empty()));
 
-				let res = interpreter(&mut nst, start, no_io, LogLevel::Quiet, None, true);	//delegate to normal interpreter
+				let res = interpreter_no_os(&mut nst, start, no_io, LogLevel::Quiet, None);	//delegate to normal interpreter
 
 				if !matches!(res, Ok(Finished)) {return runtime_error("Invalid state file".into());}	//state files don't quit
 				

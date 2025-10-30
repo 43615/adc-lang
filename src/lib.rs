@@ -277,7 +277,20 @@ fn reg_index_nice(ri: &Rational) -> String {
 	HardQuit(u8)
 }
 
-/// Interpreter entry point, executes ADC commands to modify state
+/// Safe wrapper around [`interpreter`], see its documentation.
+pub fn interpreter_no_os(
+	st: &mut State,
+	start: Utf8Iter,
+	io: Arc<Mutex<IOStreams>>,
+	ll: LogLevel,
+	kill: Option<&Receiver<()>>,
+) -> std::io::Result<ExecResult>
+{
+	//SAFETY: restrict = true
+	unsafe { interpreter(st, start, io, ll, kill, true) }
+}
+
+/// Interpreter entry point, executes ADC commands to modify state.
 ///
 /// # Arguments
 /// - `st`: State struct to work on, modified in-place
@@ -288,25 +301,32 @@ fn reg_index_nice(ri: &Rational) -> String {
 ///   - `io.2`: Error messages, one per line
 /// - `ll`: Level of verbosity for `io.2`
 /// - `kill`: Receiver for a kill signal from a parent thread, checked with `try_recv` in the command parsing loop
-/// - `restrict`: Restricted mode switch, prevents OS access (for untrusted input). If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
+/// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
 /// # Errors
-/// Any IO errors that arise when accessing the IO streams are returned early, aborting the interpreter. Keep that possibility to a minimum when preparing custom IO streams.
+/// Any IO errors (except those specified [here](ReadLine::read_line)) that arise when accessing the IO streams are returned early, aborting the interpreter.
 ///
-/// # Panics
-/// Shouldn't™
-#[cold] #[inline(never)] pub fn interpreter(
-		st: &mut State,
-		start: Utf8Iter,
-		io: Arc<Mutex<IOStreams>>,
-		mut ll: LogLevel,
-		kill: Option<&Receiver<()>>,
-		mut restrict: bool
-	) -> std::io::Result<ExecResult>
+/// This will result in an incomplete, although internally consistent, [`State`]. Keep that possibility to a minimum when preparing custom IO streams.
+///
+/// # Safety
+/// If built without the `no_os` feature (default), passing `kill = None` and `restrict = false` enables OS interactions that are fundamentally unsound in multithreaded contexts.
+///
+/// Simultaneously executing multiple instances of this function with said arguments is *Undefined Behavior*.
+///
+/// Alternatively, [`interpreter_no_os`] provides a safe wrapper.
+#[cold] #[inline(never)] pub unsafe fn interpreter(
+	st: &mut State,
+	start: Utf8Iter,
+	io: Arc<Mutex<IOStreams>>,
+	mut ll: LogLevel,
+	kill: Option<&Receiver<()>>,
+	mut restrict: bool
+) -> std::io::Result<ExecResult>
 {
 	use ExecResult::*;
 
-	let th_name = if kill.is_some() {
+	let th_name = if kill.is_some() {	//if running in a child thread
+		restrict = true;	//extra safety just in case
 		std::thread::current().name().unwrap().to_owned()
 	}
 	else {
@@ -1058,6 +1078,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 									#[cfg(not(feature = "no_os"))]
 									{
 										match (restrict, os::OS_CMDS.get(&word).copied()) {
+											//SAFETY: Only possible in the main thread
 											(false, Some(oscmd)) => {
 												match oscmd(st) {
 													Ok(mut v) => {
@@ -1187,7 +1208,7 @@ fn reg_index_nice(ri: &Rational) -> String {
 
 											'all: for (th_start, th_count) in stk {
 												for _ in malachite::natural::exhaustive::exhaustive_natural_range(Natural::ZERO, th_count) {
-													match interpreter(&mut th_st, th_start.clone(), Arc::clone(&th_io), ll, Some(&rx), true) {
+													match interpreter_no_os(&mut th_st, th_start.clone(), Arc::clone(&th_io), ll, Some(&rx)) {
 														Ok(Finished) => {continue;},
 														Ok(er) => {
 															th_res.1 = Ok(er);
