@@ -17,7 +17,6 @@ macro_rules! cmd {
 		}
 	}
 }
-pub(crate) use cmd;
 
 cmd!(sk, st {
 	if let Some(va) = st.mstk.pop() {

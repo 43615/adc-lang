@@ -35,12 +35,11 @@ impl std::error::Error for FnErr {}
 }
 impl From<&Value> for TypeLabel {
 	fn from(value: &Value) -> Self {
-		use Value::*;
 		match value {
-			B(_) => Self::B,
-			N(_) => Self::N,
-			S(_) => Self::S,
-			A(_) => Self::A
+			Value::B(_) => Self::B,
+			Value::N(_) => Self::N,
+			Value::S(_) => Self::S,
+			Value::A(_) => Self::A
 		}
 	}
 }

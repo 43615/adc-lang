@@ -238,7 +238,7 @@ impl RegStore {
 				reg.th.is_some()
 			}
 		});
-		for (ori, oreg) in other.high.drain().filter(|(_, oreg)| !oreg.v.is_empty()) {	//add remaining from other
+		for (ori, oreg) in other.high.drain().filter_map(|(ori, oreg)| (!oreg.v.is_empty()).then_some((ori, Register {v: oreg.v, th: None}))) {
 			self.high.insert(ori, oreg);
 		}
 	}

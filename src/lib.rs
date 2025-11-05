@@ -17,6 +17,7 @@ pub(crate) mod num;
 mod os;
 
 use std::io::{Write, BufRead, ErrorKind};
+use std::panic::catch_unwind;
 use std::ptr::NonNull;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
@@ -195,7 +196,7 @@ const CMDS: [Command; 256] = {
 		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,		Wrong,
 
 		//SP		!			"			#			$			%			&			'			(			)			*			+			,			-			.			/
-		Space,		Fn1(neg),	Exec,		Space,		Wrong,		Fn2(r#mod),	Wrong,		Lit,		Exec,		Exec,		Fn2(mul),	Fn2(add),	Wrong,		Fn2(sub),	Lit,		Fn2(div),
+		Space,		Fn1(neg),	Exec,		Space,		Wrong,		Fn2(modu),	Wrong,		Lit,		Exec,		Exec,		Fn2(mul),	Fn2(add),	Wrong,		Fn2(sub),	Lit,		Fn2(div),
 
 		//0			1			2			3			4			5			6			7			8			9			:			;			<			=			>			?
 		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Exec,		Wrong,		Fn2(lt),	Fn2(eq),	Fn2(gt),	Exec,
@@ -204,13 +205,13 @@ const CMDS: [Command; 256] = {
 		Lit,		Wrong,		Wrong,		Cmd(cln),	Exec,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	ExecR,		Cmd(gk),	ExecR,		Cmd(gm),	Exec,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
-		Exec,		Exec,		Exec,		ExecR,		Lit,		Wrong,		Wrong,		Wrong,		ExecR,		Wrong,		ExecR,		Lit,		Wrong,		Wrong,		Fn2(pow),	Exec,
+		Exec,		Exec,		Exec,		ExecR,		Lit,		Wrong,		Fn2(root),	Wrong,		ExecR,		Wrong,		ExecR,		Lit,		Wrong,		Wrong,		Fn2(pow),	Exec,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
-		Exec,		Exec,		Wrong,		Cmd(cls),	Exec,		Wrong,		Exec,		Fn1(log),	Wrong,		Cmd(si),	ExecR,		Cmd(sk),	ExecR,		Cmd(sm),	Wrong,		Cmd(so),
+		Exec,		Exec,		Wrong,		Cmd(cls),	Exec,		Wrong,		Exec,		Fn1(log),	Wrong,		Cmd(si),	ExecR,		Cmd(sk),	ExecR,		Cmd(sm),	Fn1(fac),	Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Exec,		Exec,		Cmd(rev),	ExecR,		Wrong,		Wrong,		Wrong,		Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
+		Exec,		Exec,		Cmd(rev),	ExecR,		Wrong,		Wrong,		Fn1(sqrt),	Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
 
 		//~~description of what i'm doing:~~ non-ASCII:
 		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
@@ -300,33 +301,34 @@ pub fn interpreter_no_os(
 ///   - `io.1`: Output, written to by printing commands
 ///   - `io.2`: Error messages, one per line
 /// - `ll`: Level of verbosity for `io.2`
-/// - `kill`: Receiver for a kill signal from a parent thread, checked with `try_recv` in the command parsing loop
+/// - `kill`: Receiver for a kill signal from a parent thread, effect is practically immediate
 /// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
 /// # Errors
-/// Any IO errors (except those specified [here](ReadLine::read_line)) that arise when accessing the IO streams are returned early, aborting the interpreter.
+/// Any IO errors (except those specified [here](ReadLine::read_line)) that arise when accessing the [`IOStreams`] are returned early, aborting the interpreter.
 ///
-/// This will result in an incomplete, although internally consistent, [`State`]. Keep that possibility to a minimum when preparing custom IO streams.
+/// This will result in an incomplete, although internally consistent, [`State`]. Keep that possibility to a minimum when preparing custom [`IOStreams`].
 ///
 /// # Safety
 /// If built without the `no_os` feature (default), passing `kill = None` and `restrict = false` enables OS interactions that are fundamentally unsound in multithreaded contexts.
 ///
-/// Simultaneously executing multiple instances of this function with said arguments is *Undefined Behavior*.
+/// Simultaneously/asynchronously executing multiple instances of this function with said arguments is *Undefined Behavior*. Do not rely on known values of `st` and `start` for safety.
 ///
 /// Alternatively, [`interpreter_no_os`] provides a safe wrapper.
-#[cold] #[inline(never)] pub unsafe fn interpreter(
+pub unsafe fn interpreter(
 	st: &mut State,
 	start: Utf8Iter,
 	io: Arc<Mutex<IOStreams>>,
 	mut ll: LogLevel,
 	kill: Option<&Receiver<()>>,
+	#[cfg_attr(feature = "no_os", allow(unused_variables))]
 	mut restrict: bool
 ) -> std::io::Result<ExecResult>
 {
 	use ExecResult::*;
 
 	let th_name = if kill.is_some() {	//if running in a child thread
-		restrict = true;	//extra safety just in case
+		#[cfg_attr(feature = "no_os", allow(unused_assignments))] { restrict = true; }	//extra safety just in case
 		std::thread::current().name().unwrap().to_owned()
 	}
 	else {
@@ -465,13 +467,17 @@ pub fn interpreter_no_os(
 				Fn1(mon) => {
 					if let Some(va) = st.mstk.pop() {
 						debug!("Monadic {}{} with {}", if alt {"alt-"} else {""}, b as char, TypeLabel::from(&*va));
-						match fns::exec1(mon, &va, alt) {
-							Ok(vz) => {
+						match catch_unwind(|| fns::exec1(mon, &va, alt)) {
+							Ok(Ok(vz)) => {
 								push!(vz);
-							}
-							Err(e) => {
+							},
+							Ok(Err(e)) => {
 								st.mstk.push(va);
 								valerr!(b as char, e.to_string());
+							},
+							Err(cause) => {
+								st.mstk.push(va);
+								valerr!(b as char, "Caught function panic: {:?}", cause);
 							}
 						}
 					}
@@ -483,14 +489,19 @@ pub fn interpreter_no_os(
 					if let Some(vb) = st.mstk.pop() {
 						if let Some(va) = st.mstk.pop() {
 							debug!("Dyadic {}{} with ({}, {})", if alt {"alt-"} else {""}, b as char, TypeLabel::from(&*va), TypeLabel::from(&*vb));
-							match fns::exec2(dya, &va, &vb, alt) {
-								Ok(vz) => {
+							match catch_unwind(|| fns::exec2(dya, &va, &vb, alt)) {
+								Ok(Ok(vz)) => {
 									push!(vz);
-								}
-								Err(e) => {
+								},
+								Ok(Err(e)) => {
 									st.mstk.push(va);
 									st.mstk.push(vb);
 									valerr!(b as char, e.to_string());
+								},
+								Err(cause) => {
+									st.mstk.push(va);
+									st.mstk.push(vb);
+									valerr!(b as char, "Caught function panic: {:?}", cause);
 								}
 							}
 						}
@@ -508,15 +519,21 @@ pub fn interpreter_no_os(
 						if let Some(vb) = st.mstk.pop() {
 							if let Some(va) = st.mstk.pop() {
 								debug!("Triadic {}{} with ({}, {}, {})", if alt {"alt-"} else {""}, b as char, TypeLabel::from(&*va), TypeLabel::from(&*vb), TypeLabel::from(&*vc));
-								match fns::exec3(tri, &va, &vb, &vc, alt) {
-									Ok(vz) => {
+								match catch_unwind(|| fns::exec3(tri, &va, &vb, &vc, alt)) {
+									Ok(Ok(vz)) => {
 										push!(vz);
-									}
-									Err(e) => {
+									},
+									Ok(Err(e)) => {
 										st.mstk.push(va);
 										st.mstk.push(vb);
 										st.mstk.push(vc);
 										valerr!(b as char, e.to_string());
+									},
+									Err(cause) => {
+										st.mstk.push(va);
+										st.mstk.push(vb);
+										st.mstk.push(vc);
+										valerr!(b as char, "Caught function panic: {:?}", cause);
 									}
 								}
 							}
@@ -552,13 +569,13 @@ pub fn interpreter_no_os(
 					}
 				},
 				Exec => {
-					debug!("Special command {}", b as char);
+					debug!("Special command {}{}", if alt {"alt-"} else {""}, b as char);
 					match b {
 						b'`' => {	//alt prefix
 							alt = true;
 							continue 'cmd;	//force digraph
 						},
-						b':' => {	//register pointer
+						b':' if !alt => {	//set register pointer
 							if let Some(va) = st.mstk.pop() {
 								if let Value::N(r) = &*va {
 									rptr = Some(r.clone());
@@ -572,6 +589,16 @@ pub fn interpreter_no_os(
 							else {
 								synerr!(':', "Expected 1 argument, 0 given");
 							}
+						},
+						b':' if alt => {	//get register pointer
+							push!(
+								if let Some(ri) = rptr.take() {
+									Value::N(ri)
+								}
+								else {
+									Value::A(vec![])
+								}
+							);
 						},
 						b'd' => {
 							if let Some(v) = st.mstk.last() {
@@ -926,7 +953,7 @@ pub fn interpreter_no_os(
 											match Natural::try_from(r) {
 												Ok(n) => {
 													push!(Value::N(Rational::from(
-														malachite::natural::random::get_random_natural_less_than(rng.get_or_insert(rng_os()), &n)
+														malachite::natural::random::get_random_natural_less_than(rng.get_or_insert_with(rng_os), &n)
 													)));
 												},
 												_ => {
@@ -946,8 +973,8 @@ pub fn interpreter_no_os(
 									match &*va {
 										Value::N(r) => {
 											match Integer::try_from(r) {
-												Ok(Integer::NEGATIVE_ONE) => {	//return to os seed
-													rng = Some(rng_os());
+												Ok(Integer::NEGATIVE_ONE) => {	//return to os seed (lazy init)
+													rng = None;
 												},
 												Ok(i) if Natural::convertible_from(&i) => {	//custom seed
 													let n= unsafe { Natural::try_from(i).unwrap_unchecked() };	//SAFETY: just checked
@@ -1030,7 +1057,7 @@ pub fn interpreter_no_os(
 
 							match &word[..] {	//word commands:
 								b"restrict" => {
-									restrict = true;
+									#[cfg_attr(feature = "no_os", allow(unused_assignments))] { restrict = true; }
 								},
 								b"quiet" => {
 									ll = LogLevel::Quiet;
@@ -1078,9 +1105,8 @@ pub fn interpreter_no_os(
 									#[cfg(not(feature = "no_os"))]
 									{
 										match (restrict, os::OS_CMDS.get(&word).copied()) {
-											//SAFETY: Only possible in the main thread
 											(false, Some(oscmd)) => {
-												match oscmd(st) {
+												match unsafe { oscmd(st) } {	//SAFETY: only reachable in the main thread, according to interpreter contract
 													Ok(mut v) => {
 														append!(v);
 													}
@@ -1127,7 +1153,7 @@ pub fn interpreter_no_os(
 							}
 						)
 					};
-					debug!("Special register command {}", b as char);
+					debug!("Special register command {}{}", if alt {"alt-"} else {""}, b as char);
 					match b {
 						b'Z' => {	//stack depth
 							push!(Value::N(
@@ -1472,7 +1498,7 @@ pub fn interpreter_no_os(
 										}
 									}
 									if is.contains(&b'`') {
-										synerr!('\'', "Negative sign (`) inside any-base number");
+										synerr!('\'', "Unexpected negative sign (`) in any-base number");
 										alt = false;
 										continue 'cmd;
 									}
@@ -1515,7 +1541,7 @@ pub fn interpreter_no_os(
 								}
 							}
 
-							let m_empty = ipart.is_empty() && fpart.is_empty() && rpart.is_empty();	//simpler const, also keep track of emptiness
+							let m_empty = ipart.is_empty() && fpart.is_empty() && rpart.is_empty();	//simpler const zero, also keep track of emptiness
 							let mut r;
 							if m_empty {
 								r = Rational::ZERO;
@@ -1543,7 +1569,7 @@ pub fn interpreter_no_os(
 											eneg = true;    //only allow on first char
 										}
 										if es.is_empty() { es.push('0'); }
-										if m_empty { r = Rational::ONE; }    //only exponent part
+										if m_empty { r = Rational::ONE; }    //only exponent part present
 										if let Ok(i) = es.parse::<i64>() {
 											r *= Rational::from(st.params.get_i()).pow(i);    //apply exponent, get original ibase
 										}
@@ -1557,7 +1583,7 @@ pub fn interpreter_no_os(
 								}
 							}
 							else if let Some(i) = exp {
-       							if m_empty { r = Rational::ONE; }    //only exponent part
+       							if m_empty { r = Rational::ONE; }    //only exponent part present
        							r *= Rational::from(ibase).pow(i);    //apply exponent
 							}
 
@@ -1655,7 +1681,7 @@ pub fn interpreter_no_os(
 					}
 				},
 				Space if b == b'#' => {	//line comment
-					debug!("Line comment, skipping until LF");
+					debug!("Line comment");
 					mac.find(|b| *b == b'\n');
 				},
 				Space => {

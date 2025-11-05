@@ -1,4 +1,4 @@
-//! OS-interfacing commands
+//! OS-interfacing commands, only safe to use in a single thread
 
 use std::cell::LazyCell;
 use std::collections::HashMap;
@@ -6,12 +6,23 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio, Child};
 use bitvec::prelude::*;
-use crate::cmds::*;
+// use crate::cmds::*;
 use crate::errors::TypeLabel;
 use crate::structs::{Value, State};
 
+/// OS command
+pub(crate) type OsCmd = unsafe fn(&mut State) -> Result<Vec<Value>, String>;
+/// Function template for OS command
+macro_rules! oscmd {
+    ($name:ident, $st:ident $block:block) => {
+		pub(crate) unsafe fn $name($st: &mut State) -> Result<Vec<Value>, String> {
+			$block
+		}
+	}
+}
 
-pub(crate) const OS_CMDS: phf::Map<&[u8], Cmd> = phf::phf_map! {
+
+pub(crate) const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
 	//static env queries
 	b"osarch" => osarch,
 	b"osfamily" => osfamily,
@@ -41,19 +52,24 @@ pub(crate) const OS_CMDS: phf::Map<&[u8], Cmd> = phf::phf_map! {
 	b"kill" => kill
 };
 
-cmd!(osarch, _st {
+/// Persistent map of child process handles
+///
+/// SAFETY: Module is private, interpreter has a safety contract that forbids access from multiple threads.
+static mut PIDS: LazyCell<HashMap<u32, Child>> = LazyCell::new(HashMap::new);
+
+oscmd!(osarch, _st {
 	Ok(vec![Value::S(std::env::consts::ARCH.into())])
 });
 
-cmd!(osfamily, _st {
+oscmd!(osfamily, _st {
 	Ok(vec![Value::S(std::env::consts::FAMILY.into())])
 });
 
-cmd!(osname, _st {
+oscmd!(osname, _st {
 	Ok(vec![Value::S(std::env::consts::OS.into())])
 });
 
-cmd!(pid, _st {
+oscmd!(pid, _st {
 	Ok(vec![Value::N(std::process::id().into())])
 });
 
@@ -69,7 +85,7 @@ fn try_writing_fd(name: &str) -> Result<File, String> {
 	OpenOptions::new().write(true).create(true).truncate(true).open(name).map_err(|e| format!("Can't open file '{name}' for writing: {e}"))
 }
 
-cmd!(read, st {
+oscmd!(read, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::S(name) = &*va {
 			let mut v = Vec::new();
@@ -103,7 +119,7 @@ cmd!(read, st {
 	}
 });
 
-cmd!(append, st {
+oscmd!(append, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
@@ -148,7 +164,7 @@ cmd!(append, st {
 	}
 });
 
-cmd!(write, st {
+oscmd!(write, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
@@ -191,7 +207,7 @@ cmd!(write, st {
 	}
 });
 
-cmd!(load, st {
+oscmd!(load, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::S(name) = &*va {
 			let mut v = Vec::new();
@@ -246,7 +262,7 @@ cmd!(load, st {
 	}
 });
 
-cmd!(save, st {
+oscmd!(save, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::S(name) = &*va {
 			match try_writing_fd(name) {
@@ -278,7 +294,7 @@ cmd!(save, st {
 	}
 });
 
-cmd!(setvar, st {
+oscmd!(setvar, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
@@ -325,7 +341,7 @@ cmd!(setvar, st {
 	}
 });
 
-cmd!(getvar, st {
+oscmd!(getvar, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::S(var) = &*va {
 			if var.is_empty() {
@@ -349,7 +365,7 @@ cmd!(getvar, st {
 	}
 });
 
-cmd!(setdir, st {
+oscmd!(setdir, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::S(path) = &*va {
 			match std::env::set_current_dir(path) {
@@ -372,22 +388,20 @@ cmd!(setdir, st {
 	}
 });
 
-cmd!(getdir, _st {
+oscmd!(getdir, _st {
 	match std::env::current_dir() {
 		Ok(path) => {Ok(vec![Value::S(path.to_string_lossy().into())])},
 		Err(e) => {Err(format!("Can't get current working directory: {e}"))}
 	}
 });
 
-cmd!(homedir, _st {
+oscmd!(homedir, _st {
 	Ok(vec![Value::S(std::env::home_dir().unwrap_or_default().to_string_lossy().into())])
 });
 
-cmd!(tempdir, _st {
+oscmd!(tempdir, _st {
 	Ok(vec![Value::S(std::env::temp_dir().to_string_lossy().into())])
 });
-
-static mut PIDS: LazyCell<HashMap<u32, Child>> = LazyCell::new(HashMap::new);	//SAFETY: this module is only ever accessed by the main thread
 
 fn try_child(command: &str, input: &str) -> Result<Child, String> {
 	let mut envs = Vec::new();
@@ -437,7 +451,7 @@ fn try_child(command: &str, input: &str) -> Result<Child, String> {
 	}
 }
 
-cmd!(run, st {
+oscmd!(run, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
@@ -486,14 +500,14 @@ cmd!(run, st {
 	}
 });
 
-cmd!(spawn, st {
+oscmd!(spawn, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
 				(Value::S(command), Value::S(input)) => {
 					let child = try_child(command, input).inspect_err(|_| { st.mstk.push(va); st.mstk.push(vb); })?;
 					let pid = child.id();
-					unsafe { #[allow(static_mut_refs)] PIDS.insert(pid, child); }
+					unsafe { #[expect(static_mut_refs)] PIDS.insert(pid, child); }
 					Ok(vec![Value::N(pid.into())])
 				},
 				_ => {
@@ -515,11 +529,11 @@ cmd!(spawn, st {
 	}
 });
 
-cmd!(wait, st {
+oscmd!(wait, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(ra) = &*va {
 			if let Ok(pid) = u32::try_from(ra) {
-				if let Some(child) = unsafe { #[allow(static_mut_refs)] PIDS.remove(&pid) } {
+				if let Some(child) = unsafe { #[expect(static_mut_refs)] PIDS.remove(&pid) } {
 					match child.wait_with_output() {
 						Ok(o) => {
 							Ok(vec![
@@ -530,7 +544,7 @@ cmd!(wait, st {
 						},
 						Err(e) => {
 							st.mstk.push(va);
-							Err(format!("Can't wait for child process {pid}: {e}"))
+							Err(format!("Can't get output of child process {pid}: {e}"))
 						}
 					}
 				}
@@ -556,11 +570,11 @@ cmd!(wait, st {
 	}
 });
 
-cmd!(exited, st {
+oscmd!(exited, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(ra) = &*va {
 			if let Ok(pid) = u32::try_from(ra) {
-				if let Some(child) = unsafe { #[allow(static_mut_refs)] PIDS.get_mut(&pid) } {
+				if let Some(child) = unsafe { #[expect(static_mut_refs)] PIDS.get_mut(&pid) } {
 					let mut bz = BitVec::new();
 					match child.try_wait() {
 						Ok(Some(_)) => {
@@ -599,11 +613,11 @@ cmd!(exited, st {
 	}
 });
 
-cmd!(kill, st {
+oscmd!(kill, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(ra) = &*va {
 			if let Ok(pid) = u32::try_from(ra) {
-				if let Some(mut child) = unsafe { #[allow(static_mut_refs)] PIDS.remove(&pid) } {
+				if let Some(mut child) = unsafe { #[expect(static_mut_refs)] PIDS.remove(&pid) } {
 					match child.kill() {
 						Ok(()) => {
 							match child.wait_with_output() {

@@ -5,9 +5,9 @@
 use std::collections::VecDeque;
 use std::ptr::NonNull;
 use bitvec::prelude::*;
-use malachite::{Natural, Integer, Rational};
-use malachite::base::num::arithmetic::traits::{DivRem, Mod, ModInverse, ModPow, Reciprocal};
-use malachite::base::num::basic::traits::{NegativeOne, Zero};
+use malachite::{Natural, Rational};
+use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, DivMod, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal};
+use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value::{self, *};
 use crate::conv::*;
@@ -168,7 +168,7 @@ dya!(mul
 		}
 		else {
 			Err(Arith(
-				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
 			))
 		}
 	},
@@ -176,7 +176,7 @@ dya!(mul
 	N(ra), N(rb), _ => Ok(N(ra * rb)),	//multiply numbers
 	
 	S(sa), N(rb), _ => {	//repeat string
-		let ib = r_i1(rb);
+		let ib = r_i(rb)?;
 		match usize::try_from(&ib) {
 			Ok(ub) if sa.len().checked_mul(ub).is_some() => Ok(S(sa.repeat(ub))),
 			_ => Err(Index(ib.to_owned()))
@@ -191,7 +191,7 @@ dya!(div
 		}
 		else {
 			Err(Arith(
-				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
 			))
 		}
 	},
@@ -200,18 +200,18 @@ dya!(div
 		if *rb != Rational::ZERO {
 			Ok(N(ra / rb))
 		}
-		else {
-			Err(Arith("division by 0".into()))
+		else {	//undefined
+			Err(Arith("Division by 0".into()))
 		}
 	}
 );
 
 mon!(neg
-	B(ba), _ => Ok(B(!ba.clone())),	//negate boolean
+	B(ba), _ => {	//negate boolean
+		Ok(B(!ba.to_owned()))
+	},
 	
-	N(ra), _ => Ok(N(ra.reciprocal())),	//reciprocate number
-	
-	S(sa), _ => Ok(S(sa.chars().rev().collect()))	//reverse string
+	N(ra), _ => Ok(N(ra.reciprocal()))	//reciprocate number
 );
 
 dya!(pow
@@ -221,14 +221,27 @@ dya!(pow
 		}
 		else {
 			Err(Arith(
-				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
 			))
 		}
 	},
 	
 	N(ra), N(rb), _ => {	//raise number to power
-		let (fa, fb) = r_f2(ra, rb);
-		f_r1(fa.powf(fb)).map(N)
+		if *ra == Rational::ZERO && *rb < Rational::ZERO {	//undefined
+			Err(Arith("Negative power of 0".into()))
+		}
+		else if let Ok(ub) = u64::try_from(&rb.abs()) {
+			if *rb < Rational::ZERO {
+				Ok(N(ra.reciprocal().pow(ub)))
+			}
+			else {
+				Ok(N(ra.pow(ub)))
+			}
+		}
+		else {
+			let (fa, fb) = (r_f(ra), r_f(rb));
+			f_r(fa.powf(fb)).map(N)
+		}
 	},
 	
 	S(sa), S(sb), false => {	//find substring by literal
@@ -254,10 +267,71 @@ dya!(pow
 	}
 );
 
+mon!(sqrt
+	B(ba), _ => {	//reverse boolean
+		let mut bz = ba.to_owned();
+		bz.reverse();
+		Ok(B(bz))
+	},
+
+	N(ra), _ => {	//square root of number
+		if *ra < Rational::ZERO {	//undefined
+			Err(Arith("Square root of negative number".into()))
+		}
+		else if let Some(rz) = ra.checked_sqrt() {
+			Ok(N(rz))
+		}
+		else {
+			f_r(r_f(ra).sqrt()).map(N)
+		}
+	},
+
+	S(sa), _ => Ok(S(sa.chars().rev().collect()))	//reverse string
+);
+
+dya!(root
+	N(ra), N(rb), _ => {
+		if *rb == Rational::ZERO {	//undefined
+			Err(Arith("0th root".into()))
+		}
+		else if *ra == Rational::ZERO && *rb < Rational::ZERO {
+			Err(Arith("Negative root of 0".into()))
+		}
+		else if let Ok(ub) = u64::try_from(&rb.abs()) {
+			if *ra < Rational::ZERO && ub % 2 == 0 {
+				Err(Arith("Even root of negative number".into()))
+			}
+			else if let Some(rz) = ra.checked_root(ub) {
+				if *rb < Rational::ZERO {
+					Ok(N(rz.reciprocal()))
+				}
+				else {
+					Ok(N(rz))
+				}
+			}
+			else {
+				let (fa, fb) = (r_f(ra), r_f(rb));
+				f_r(fa.powf(fb.recip())).map(N)
+			}
+		}
+		else {
+			let (fa, fb) = (r_f(ra), r_f(rb));
+			f_r(fa.powf(fb.recip())).map(N)
+		}
+	}
+);
+
 mon!(log
 	B(ba), _ => Ok(N(ba.len().into())),	//length of boolean
 	
-	N(ra), _ => f_r1(r_f1(ra).ln()).map(N),	//natural log of number
+	N(ra), _ => {
+		if *ra <= Rational::ZERO {	//undefined
+			Err(Arith("Natural logarithm of non-positive number".into()))
+		}
+		else {
+			f_r(ra.approx_log()).map(N)
+		}
+	},
 	
 	S(sa), false => Ok(N(sa.chars().count().into())),	//char length of string
 	
@@ -266,24 +340,42 @@ mon!(log
 
 dya!(logb
 	N(ra), N(rb), _ => {	//base b log of a
-		let (fa, fb) = r_f2(ra, rb);
-		f_r1(fa.log(fb)).map(N)
+		if *ra <= Rational::ZERO {
+			Err(Arith("Logarithm of non-positive number".into()))
+		}
+		else if *rb == Rational::ONE {
+			Err(Arith("Logarithm with base 1".into()))
+		}
+		else if let Some(iz) = ra.checked_log_base(rb) {
+			Ok(N(iz.into()))
+		}
+		else {
+			let (fa, fb) = (r_f(ra), r_f(rb));
+			f_r(
+				match fb {
+					std::f64::consts::E => ra.approx_log(),
+					2f64 => fa.log2(),
+					10f64 => fa.log10(),
+					_ => fa.log(fb)
+				}
+			).map(N)
+		}
 	}
 );
 
-dya!(r#mod
+dya!(modu
 	N(ra), N(rb), _ => {	//modulo
-		let (ia, ib) = r_i2(ra, rb);
-		if ib != Rational::ZERO {
-			Ok(N(ia.mod_op(ib).into()))
+		let (ia, ib) = (r_i(ra)?, r_i(rb)?);
+		if ib == Rational::ZERO {	//undefined
+			Err(Arith("Reduction mod 0".into()))
 		}
 		else {
-			Err(Arith("reduction mod 0".into()))
+			Ok(N(ia.mod_op(ib).into()))
 		}
 	},
 
 	S(sa), N(rb), _ => {	//extract char
-		let ib = r_i1(rb);
+		let ib = r_i(rb)?;
 		if let Ok(ub) = usize::try_from(&ib) {
 			Ok(S(sa.chars().nth(ub).map(|c| c.into()).unwrap_or_default()))
 		}
@@ -295,7 +387,7 @@ dya!(r#mod
 
 dya!(euc
 	B(ba), N(rb), _ => {	//split boolean
-		let ib = r_i1(rb);
+		let ib = r_i(rb)?;
 		if let Ok(ub) = usize::try_from(&ib) {
 			if ub < ba.len() {
 				let mut by = ba.to_owned();
@@ -312,21 +404,21 @@ dya!(euc
 	},
 
 	N(ra), N(rb), _ => {	//euclidean division
-		let (ia, ib) = r_i2(ra, rb);
-		if ib != Rational::ZERO {
-			let (quot, rem) = ia.div_rem(ib);
+		let (ia, ib) = (r_i(ra)?, r_i(rb)?);
+		if ib == Rational::ZERO {	//undefined
+			Err(Arith("Euclidean division by 0".into()))
+		}
+		else {
+			let (quot, rem) = ia.div_mod(ib);
 			Ok(A(vec![
 				N(quot.into()),
 				N(rem.into())
 			]))
 		}
-		else {
-			Err(Arith("reduction mod 0".into()))
-		}
 	},
 
 	S(sa), N(rb), _ => {	//split string at char
-		let ib = r_i1(rb);
+		let ib = r_i(rb)?;
 		if let Ok(ub) = usize::try_from(&ib) {
 			let bidx = sa.char_indices().position(|(cidx, _)| cidx==ub).unwrap();
 			if bidx < sa.len() {
@@ -357,9 +449,17 @@ tri!(bar
 	},
 
 	N(ra), N(rb), N(rc), _ => {	//modular exponentiation (a ^ b mod c)
-		let (mut na, nb, nc) = r_n3(ra, rb, rc);
-		if rb < &Rational::ZERO {	//find inverse if exponent is negative
-			na = (&na % &nc).mod_inverse(&nc).ok_or_else(|| Arith(format!("{na} doesn't have an inverse mod {nc}")))?;
+		let mut na = r_n(ra)?;
+		let nb = r_n(&rb.abs())?;
+		let nc = r_n(rc)?;
+		if *rb < Rational::ZERO {	//find inverse if exponent is negative
+			let rem = &na % &nc;
+			if rem == Natural::ZERO {
+				return Err(Arith("0 can't be coprime".into()));
+			}
+			else {
+				na = (&rem).mod_inverse(&nc).ok_or_else(|| Arith(format!("{na} doesn't have a coprime mod {nc}")))?;
+			}
 		}
 		Ok(N((na % &nc).mod_pow(nb, nc).into()))
 	},
@@ -387,10 +487,10 @@ dya!(eq
 		}
 		else if !m {
 			Err(Arith(
-				format!("booleans of different lengths: {}, {}", ba.len(), bb.len())
+				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
 			))
 		}
-		else {	//total: false
+		else {	//total: false if lengths differ
 			let mut bz = BitVec::new();
 			bz.push(false);
 			Ok(B(bz))
@@ -406,14 +506,14 @@ dya!(eq
 		bz.push(sa == sb);
 		Ok(B(bz))
 	},
-	_, _, true => {	//total: false
+	_, _, true => {	//total: false if types differ
 		let mut bz = BitVec::new();
 		bz.push(false);
 		Ok(B(bz))
 	}
 );
 
-dya!(lt	//TODO: verify B
+dya!(lt
 	B(ba), B(bb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(
@@ -431,10 +531,15 @@ dya!(lt	//TODO: verify B
 		let mut bz = BitVec::new();
 		bz.push(str_cmp(sa, sb).is_lt());
 		Ok(B(bz))
+	},
+	_, _, true => {	//total: false if types differ
+		let mut bz = BitVec::new();
+		bz.push(false);
+		Ok(B(bz))
 	}
 );
 
-dya!(gt	//TODO: verify B
+dya!(gt
 	B(ba), B(bb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(
@@ -452,5 +557,41 @@ dya!(gt	//TODO: verify B
 		let mut bz = BitVec::new();
 		bz.push(str_cmp(sa, sb).is_gt());
 		Ok(B(bz))
+	},
+	_, _, true => {	//total: false if types differ
+		let mut bz = BitVec::new();
+		bz.push(false);
+		Ok(B(bz))
+	}
+);
+
+mon!(fac
+	N(na), _ => {	//factorial
+		if let Ok(n) = Natural::try_from(na) {
+			if let Ok(u) = u64::try_from(&n) {
+				Ok(N(Natural::factorial(u).into()))
+			}
+			else {
+				Err(Arith(format!("Factorial of {na} is unrepresentable",)))
+			}
+		}
+		else {
+			Err(Arith("Non-natural given".into()))
+		}
+	},
+
+	S(sa), _ => {	//selected constants
+		Ok(N(f_r(
+			match sa.as_str() {
+				"e" => std::f64::consts::E,
+				"pi" => std::f64::consts::PI,
+				"phi" => 1.618033988749895,
+				"gamma" => 0.5772156649015329,
+				"delta" => 4.669201609102991,
+				"alpha" => 2.5029078750958928,
+				"epsilon" => f64::EPSILON,
+				_ => {return Err(Arith(format!("Unknown constant {sa}")));}
+			}
+		)?))
 	}
 );

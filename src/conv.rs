@@ -2,52 +2,31 @@
 
 use std::cmp::Ordering;
 use malachite::{Natural, Integer, Rational};
-use malachite::base::num::arithmetic::traits::Abs;
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode;
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value;
 
 
-pub(crate) fn r_i1(ra: &Rational) -> Integer {
-	Integer::rounding_from(ra, RoundingMode::Down).0
+pub(crate) fn r_i(ra: &Rational) -> Result<Integer, FnErr> {
+	Integer::try_from(ra).map_err(|_| Arith("Non-integer given".into()))
 }
 
-pub(crate) fn r_i2(ra: &Rational, rb: &Rational) -> (Integer, Integer) {
-	(r_i1(ra), r_i1(rb))
+pub(crate) fn r_n(ra: &Rational) -> Result<Natural, FnErr> {
+	Natural::try_from(ra).map_err(|_| Arith("Non-natural given".into()))
 }
 
-pub(crate) fn r_n1(ra: &Rational) -> Natural {
-	Natural::rounding_from(ra.abs(), RoundingMode::Down).0
-}
-
-pub(crate) fn r_n2(ra: &Rational, rb: &Rational) -> (Natural, Natural) {
-	(r_n1(ra), r_n1(rb))
-}
-
-pub(crate) fn r_n3(ra: &Rational, rb: &Rational, rc: &Rational) -> (Natural, Natural, Natural) {
-	(r_n1(ra), r_n1(rb), r_n1(rc))
-}
-
-pub(crate) fn r_f1(ra: &Rational) -> f64 {
+pub(crate) fn r_f(ra: &Rational) -> f64 {
 	f64::rounding_from(ra, RoundingMode::Nearest).0
 }
 
-pub(crate) fn r_f2(ra: &Rational, rb: &Rational) -> (f64, f64) {
-	(r_f1(ra), r_f1(rb))
-}
-
-pub(crate) fn f_r1(fa: f64) -> Result<Rational, FnErr> {
-	if fa.is_nan() {Err(Arith("result is NaN".into()))}
-	else if fa == f64::INFINITY {Err(Arith("result is +∞".into()))}
-	else if fa == f64::NEG_INFINITY {Err(Arith("result is -∞".into()))}
+pub(crate) fn f_r(fa: f64) -> Result<Rational, FnErr> {
+	if fa.is_nan() {Err(Arith("Floating-point result is NaN".into()))}
+	else if fa == f64::INFINITY {Err(Arith("Floating-point result is +∞".into()))}
+	else if fa == f64::NEG_INFINITY {Err(Arith("Floating-point result is -∞".into()))}
 	else {
 		Ok(Rational::try_from_float_simplest(fa).unwrap())
 	}
-}
-
-pub(crate) fn f_r2(fa: f64, fb: f64) -> Result<(Rational, Rational), FnErr> {
-	Ok((f_r1(fa)?, f_r1(fb)?))
 }
 
 pub(crate) fn str_cmp(a: &str, b: &str) -> Ordering {
