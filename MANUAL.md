@@ -115,12 +115,6 @@ This implicit application of operations is limited to the pure arithmetic functi
 - In this implementation, the "recursion" is implemented using an iterative algorithm in heap memory and the "promotion" does not actually allocate a new array. This avoids stack overflow issues on real systems and utilizes a practical minimum amount of memory (tested with recursion depths in the millions). Other interpreter implementations should employ similar algorithms if possible.
 
 
-# Booleans
-
-Booleans are bit vectors of arbitrary length. Boolean literals are sequences of `T` (true, 1) and `F` (false, 0).
-
-
-
 # Numbers
 
 This ADC interpreter uses the highly performant [Malachite](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base >=2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
@@ -209,6 +203,30 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
 
 
+# Booleans
+
+Booleans are bit vectors of arbitrary length. Boolean literals are sequences of `T` (true, 1) and `F` (false, 0).
+
+Operations on booleans are overloaded variants of arithmetic functions:
+- `Ba Bb + → Bz` concatenates *a* and *b*.
+- `Ba NPb - → Bz` removes *b* bits from the end of *a*.
+- `Ba NPb * → Bz` repeats *a* *b* times.
+- `Ba NPb / → Bz` truncates *a* to *b* bits. No effect if *b* exceeds the length.
+- `Ba ! → Bz` negates *a*.
+- `Ba Bb - → Bz`: *a* XOR *b*. *b* is truncated or extended with `F` to match the length of *a*.
+- `Ba Bb * → Bz`: *a* AND *b*, ibid.
+- `Ba Bb / → Bz`: *a* OR *b*, ibid.
+- `Ba Bb ^ → NZz` finds the first occurrence of *b* in *a* and returns its position, `` `1 `` if not found.
+- `Ba v → Bz` reverses *a*.
+- `Ba g → NPz`: length of *a*.
+- `Ba Bb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (z = length + 1).
+- `Ba NPb % → BBz`: *b*th bit of *a*.
+- `Ba NPb ~ → (By Bz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
+- `Xa Yb BBc | → Zz` selects *a* if *c* is `T`, or *b* if `F`.
+  - `Xa Yb Bc | → (Zz)` makes an array of *a* or *b* for every bit in *c*.
+- `Ba Bb < → BBz` / `Ba Bb = → BBz` / `Ba Bb > → BBz`: comparisons of booleans. Binary value comparison if lengths are equal, length comparison otherwise.
+
+
 # Strings
 
 Strings are sequences of Unicode characters, stored in the UTF-8 format.
@@ -228,6 +246,24 @@ Since nesting is required for any complex program, string input uses `[square br
 - `\[` and `\]`: Unpaired square brackets (5B, 5D), not processed as string delimiters. These need to be escaped multiple (2ⁿ-1) times in nested strings, as one would do with quotes in other languages ("backslash explosion"). Example: Executing `[[[foo\\\\\\\]bar]]]` parses it into `[[foo\\\]bar]]`, then `[foo\]bar]` and finally `foo]bar` (as it would be printed).
   - A nicer alternative is to use [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93 <TODO> +[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
 - `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is rejected otherwise.
+
+Strings also use overloaded variants of arithmetic functions:
+- `Sa Sb + → Sz` concatenates *a* and *b*.
+- `Sa NPb - → Sz` removes *b* characters from the end of *a*.
+- `Sa NPb * → Sz` repeats *a* *b* times.
+- `Sa NPb / → Sz` truncates *a* to *b* characters. No effect if *b* exceeds the length.
+- `Sa ! → Sz` inverts the case of all characters in *a*.
+- `Sa Sb ^ → NZz` finds the first occurrence of *b* in *a* and returns its position, `` `1 `` if not found.
+  - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here](https://docs.rs/regex/latest/regex/index.html#syntax).
+- `Sa v → Sz` reverses *a*.
+- `Sa g → NPz`: length of *a*.
+  - `` Sa `g → NPz ``: byte length of *a*.
+- `Sa Sb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (z = length + 1).
+  - `` Sa Sb `G → NPz `` counts the matches of regex *b* in *a*.
+- `Sa NPb % → SCz`: *b*th character of *a*.
+- `Sa NPb ~ → (Sy Sz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
+- `Sa Sb Sc | → Sz` replaces all occurrences of *b* in *a* with *c*. Empty *b* is found everywhere.
+  - `` Sa Sb Sc `| → Sz `` replaces all matches of regex *b* in *a* with *c*. Replacement string syntax is documented [here](https://docs.rs/regex/latest/regex/struct.Regex.html#replacement-string-syntax).
 
 
 # Stack operations

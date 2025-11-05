@@ -148,7 +148,7 @@ pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<
 dya!(add
 	B(ba), B(bb), _ => {	//concat booleans
 		let mut res = ba.to_owned();
-		res.append(&mut bb.to_owned());
+		res.extend_from_bitslice(bb);
 		Ok(B(res))
 	},
 
@@ -158,42 +158,65 @@ dya!(add
 );
 
 dya!(sub
-	N(ra), N(rb), _ => Ok(N(ra - rb))	//subtract numbers
+	B(ba), B(bb), _ => {	//boolean xor
+		Ok(B(ba.to_owned() ^ bb))
+	},
+
+	B(ba), N(rb), _ => {	//shorten boolean
+		let ub = r_u(rb)?;
+		let mut bz = ba.to_owned();
+		bz.truncate(bz.len().saturating_sub(ub));
+		Ok(B(bz))
+	},
+
+	N(ra), N(rb), _ => Ok(N(ra - rb)),	//subtract numbers
+
+	S(sa), N(rb), _ => {	//shorten string
+		let ub = r_u(rb)?;
+		let mut i = sa.chars();
+		for _ in 0..ub { i.next_back(); }
+		Ok(S(i.collect()))
+	}
 );
 
 dya!(mul
 	B(ba), B(bb), _ => {	//boolean and
-		if ba.len() == bb.len() {
-			Ok(B(ba.clone() & bb))
+		Ok(B(ba.clone() & bb))
+	},
+
+	B(ba), N(rb), _ => {	//repeat boolean
+		let ub = r_u(rb)?;
+		if ba.len().checked_mul(ub).is_some() {
+			Ok(B(ba.repeat(ub)))
 		}
 		else {
-			Err(Arith(
-				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
-			))
+			Err(Arith(format!("Boolean repeated {ub} times is unrepresentable")))
 		}
 	},
 
 	N(ra), N(rb), _ => Ok(N(ra * rb)),	//multiply numbers
 	
 	S(sa), N(rb), _ => {	//repeat string
-		let ib = r_i(rb)?;
-		match usize::try_from(&ib) {
-			Ok(ub) if sa.len().checked_mul(ub).is_some() => Ok(S(sa.repeat(ub))),
-			_ => Err(Index(ib.to_owned()))
+		let ub = r_u(rb)?;
+		if sa.len().checked_mul(ub).is_some() {
+			Ok(S(sa.repeat(ub)))
+		}
+		else {
+			Err(Arith(format!("String repeated {ub} times is unrepresentable")))
 		}
 	}
 );
 
 dya!(div
 	B(ba), B(bb), _ => {	//boolean or
-		if ba.len() == bb.len() {
-			Ok(B(ba.clone() | bb))
-		}
-		else {
-			Err(Arith(
-				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
-			))
-		}
+		Ok(B(ba.clone() | bb))
+	},
+
+	B(ba), N(rb), _ => {	//truncate boolean
+		let ub = r_u(rb)?;
+		let mut bz = ba.to_owned();
+		bz.truncate(ub);
+		Ok(B(bz))
 	},
 	
 	N(ra), N(rb), _ => {	//divide numbers
@@ -203,29 +226,50 @@ dya!(div
 		else {	//undefined
 			Err(Arith("Division by 0".into()))
 		}
+	},
+
+	S(sa), N(rb), _ => {	//truncate string
+		let ub = r_u(rb)?;
+		Ok(S(sa.chars().take(ub).collect()))
 	}
 );
 
 mon!(neg
-	B(ba), _ => {	//negate boolean
-		Ok(B(!ba.to_owned()))
-	},
+	B(ba), _ => Ok(B(!ba.to_owned())),	//negate boolean
 	
-	N(ra), _ => Ok(N(ra.reciprocal()))	//reciprocate number
+	N(ra), _ => Ok(N(ra.reciprocal())),	//reciprocate number
+
+	S(sa), _ => {	//invert case of string
+		let mut sz = String::new();
+		for c in sa.chars() {
+			if c.is_uppercase() {
+				for l in c.to_lowercase() { sz.push(l); }
+			}
+			else if c.is_lowercase() {	//cases are mutually exclusive per the Unicode standard
+				for u in c.to_uppercase() { sz.push(u); }
+			}
+			else {
+				sz.push(c);
+			}
+		}
+		Ok(S(sz))
+	}
 );
 
 dya!(pow
-	B(ba), B(bb), _ => {	//boolean xor
-		if ba.len() == bb.len() {
-			Ok(B(ba.clone() ^ bb))
+	B(ba), B(bb), _ => {	//find sequence in boolean
+		if bb.is_empty() {	//empty pattern matches at start
+			Ok(N(Rational::ZERO))
 		}
 		else {
-			Err(Arith(
-				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
+			Ok(N(
+				ba.windows(bb.len())
+				.position(|bs| bs == bb)
+				.map(|uz| uz.into()).unwrap_or(Rational::NEGATIVE_ONE)
 			))
 		}
 	},
-	
+
 	N(ra), N(rb), _ => {	//raise number to power
 		if *ra == Rational::ZERO && *rb < Rational::ZERO {	//undefined
 			Err(Arith("Negative power of 0".into()))
@@ -246,7 +290,7 @@ dya!(pow
 	
 	S(sa), S(sb), false => {	//find substring by literal
 		if let Some(bidx) = sa.find(sb) {	//byte position
-			Ok(N(sa.char_indices().position(|(cidx, _)| cidx==bidx).unwrap().into()))	//char position
+			Ok(N(sa.char_indices().position(|(cidx, _)| cidx == bidx).unwrap().into()))	//char position
 		}
 		else {
 			Ok(N(Rational::NEGATIVE_ONE))
@@ -257,12 +301,15 @@ dya!(pow
 		let re = RE_CACHE.get(sb).map_err(Custom)?;
 		if let Some(m) = re.find(sa) {	//find match
 			Ok(A(vec![
-				N(sa.char_indices().position(|(cidx, _)| cidx==m.start()).unwrap().into()),	//char position of start
+				N(sa.char_indices().position(|(cidx, _)| cidx == m.start()).unwrap().into()),	//char position of start
 				N(m.as_str().chars().count().into())	//char length of match
 			]))
 		}
 		else {
-			Ok(N(Rational::NEGATIVE_ONE))
+			Ok(A(vec![
+				N(Rational::NEGATIVE_ONE),
+				N(Rational::ZERO)
+			]))
 		}
 	}
 );
@@ -290,7 +337,7 @@ mon!(sqrt
 );
 
 dya!(root
-	N(ra), N(rb), _ => {
+	N(ra), N(rb), _ => {	//bth root of a
 		if *rb == Rational::ZERO {	//undefined
 			Err(Arith("0th root".into()))
 		}
@@ -339,6 +386,18 @@ mon!(log
 );
 
 dya!(logb
+	B(ba), B(bb), _ => {	//count matches in boolean
+		if bb.is_empty() {	//empty pattern matches everywhere
+			Ok(N((ba.len() + 1).into()))
+		}
+		else {
+			Ok(N(
+				ba.windows(bb.len())
+				.filter(|bs| bs == bb).count().into()
+			))
+		}
+	},
+
 	N(ra), N(rb), _ => {	//base b log of a
 		if *ra <= Rational::ZERO {
 			Err(Arith("Logarithm of non-positive number".into()))
@@ -360,10 +419,40 @@ dya!(logb
 				}
 			).map(N)
 		}
+	},
+
+	S(sa), S(sb), false => {	//count literal matches in string
+		let len = sb.chars().count();
+		if len == 0 {
+			Ok(N((len + 1).into()))
+		}
+		else {
+			Ok(N(
+				sa.as_bytes().windows(len)
+				.filter(|bs| *bs == sb.as_bytes()).count().into()
+			))
+		}
+	},
+
+	S(sa), S(sb), true => {	//count regex matches in string
+		let re = RE_CACHE.get(sb).map_err(Custom)?;
+		Ok(N(re.find_iter(sa).count().into()))
 	}
 );
 
 dya!(modu
+	B(ba), N(rb), _ => {	//extract bit
+		let ub = r_u(rb)?;
+		if let Some(b) = ba.get(ub) {
+			let mut bz = BitVec::new();
+			bz.push(*b);
+			Ok(B(bz))
+		}
+		else {
+			Err(Index(ub))
+		}
+	},
+
 	N(ra), N(rb), _ => {	//modulo
 		let (ia, ib) = (r_i(ra)?, r_i(rb)?);
 		if ib == Rational::ZERO {	//undefined
@@ -375,32 +464,24 @@ dya!(modu
 	},
 
 	S(sa), N(rb), _ => {	//extract char
-		let ib = r_i(rb)?;
-		if let Ok(ub) = usize::try_from(&ib) {
-			Ok(S(sa.chars().nth(ub).map(|c| c.into()).unwrap_or_default()))
+		let ub = r_u(rb)?;
+		if let Some(c) = sa.chars().nth(ub) {
+			Ok(S(c.into()))
 		}
 		else {
-			Err(Index(ib))
+			Err(Index(ub))
 		}
 	}
 );
 
 dya!(euc
 	B(ba), N(rb), _ => {	//split boolean
-		let ib = r_i(rb)?;
-		if let Ok(ub) = usize::try_from(&ib) {
-			if ub < ba.len() {
-				let mut by = ba.to_owned();
-				let bz = by.split_off(ub);
-				Ok(A(vec![B(by), B(bz)]))
-			}
-			else {
-				Err(Index(ib))
-			}
-		}
-		else {
-			Err(Index(ib))
-		}
+		let ub = r_u(rb)?;
+		let mut i = ba.iter();
+		Ok(A(vec![
+			B(i.by_ref().take(ub).collect()),
+			B(i.collect())
+		]))
 	},
 
 	N(ra), N(rb), _ => {	//euclidean division
@@ -418,32 +499,23 @@ dya!(euc
 	},
 
 	S(sa), N(rb), _ => {	//split string at char
-		let ib = r_i(rb)?;
-		if let Ok(ub) = usize::try_from(&ib) {
-			let bidx = sa.char_indices().position(|(cidx, _)| cidx==ub).unwrap();
-			if bidx < sa.len() {
-				let mut sy = sa.to_owned();
-				let sz = sy.split_off(bidx);
-				Ok(A(vec![S(sy), S(sz)]))
-			}
-			else {
-				Err(Index(ib))
-			}
-		}
-		else {
-			Err(Index(ib))
-		}
+		let ub = r_u(rb)?;
+		let mut i = sa.chars();
+		Ok(A(vec![
+			S(i.by_ref().take(ub).collect()),
+			S(i.collect())
+		]))
 	}
 );
 
 tri!(bar
-	B(ba), b, c, _ => {	//selection (a ? b : c)
-		if ba.len() == 1 {	//scalar value
-			if ba[0] {Ok(b.to_owned())} else {Ok(c.to_owned())}
+	a, b, B(bc), _ => {	//selection (c ? a : b)
+		if bc.len() == 1 {	//one bit, make scalar
+			if bc[0] {Ok(a.to_owned())} else {Ok(b.to_owned())}
 		}
 		else {	//array of values for each bit
 			Ok(A(
-				ba.iter().by_vals().map(|bit| if bit {b.to_owned()} else {c.to_owned()}).collect()
+				bc.iter().by_vals().map(|bit| if bit {a.to_owned()} else {b.to_owned()}).collect()
 			))
 		}
 	},
@@ -479,26 +551,19 @@ mon!(disc
 );
 
 dya!(eq
-	B(ba), B(bb), m => {
+	B(ba), B(bb), _ => {
 		if ba.len() == bb.len() {
 			let mut bz = BitVec::new();
 			bz.push(ba == bb);
 			Ok(B(bz))
 		}
-		else if !m {
-			Err(Arith(
-				format!("Booleans of different lengths: {}, {}", ba.len(), bb.len())
-			))
-		}
-		else {	//total: false if lengths differ
-			let mut bz = BitVec::new();
-			bz.push(false);
-			Ok(B(bz))
+		else {
+			Ok(B(bitvec![0]))
 		}
 	},
-	N(na), N(nb), _ => {
+	N(ra), N(rb), _ => {
 		let mut bz = BitVec::new();
-		bz.push(na == nb);
+		bz.push(ra == rb);
 		Ok(B(bz))
 	},
 	S(sa), S(sb), _ => {
@@ -507,9 +572,7 @@ dya!(eq
 		Ok(B(bz))
 	},
 	_, _, true => {	//total: false if types differ
-		let mut bz = BitVec::new();
-		bz.push(false);
-		Ok(B(bz))
+		Ok(B(bitvec![0]))
 	}
 );
 
@@ -522,9 +585,9 @@ dya!(lt
 		);
 		Ok(B(bz))
 	},
-	N(na), N(nb), _ => {
+	N(ra), N(rb), _ => {
 		let mut bz = BitVec::new();
-		bz.push(na < nb);
+		bz.push(ra < rb);
 		Ok(B(bz))
 	},
 	S(sa), S(sb), _ => {
@@ -533,9 +596,7 @@ dya!(lt
 		Ok(B(bz))
 	},
 	_, _, true => {	//total: false if types differ
-		let mut bz = BitVec::new();
-		bz.push(false);
-		Ok(B(bz))
+		Ok(B(bitvec![0]))
 	}
 );
 
@@ -548,9 +609,9 @@ dya!(gt
 		);
 		Ok(B(bz))
 	},
-	N(na), N(nb), _ => {
+	N(ra), N(rb), _ => {
 		let mut bz = BitVec::new();
-		bz.push(na > nb);
+		bz.push(ra > rb);
 		Ok(B(bz))
 	},
 	S(sa), S(sb), _ => {
@@ -559,17 +620,15 @@ dya!(gt
 		Ok(B(bz))
 	},
 	_, _, true => {	//total: false if types differ
-		let mut bz = BitVec::new();
-		bz.push(false);
-		Ok(B(bz))
+		Ok(B(bitvec![0]))
 	}
 );
 
 mon!(fac
-	N(na), _ => {	//factorial
-		if let Ok(n) = Natural::try_from(na) {
-			if let Ok(u) = u64::try_from(&n) {
-				Ok(N(Natural::factorial(u).into()))
+	N(ra), _ => {	//factorial
+		if let Ok(na) = Natural::try_from(ra) {
+			if let Ok(ua) = u64::try_from(&na) {
+				Ok(N(Natural::factorial(ua).into()))
 			}
 			else {
 				Err(Arith(format!("Factorial of {na} is unrepresentable",)))

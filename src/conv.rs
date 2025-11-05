@@ -7,13 +7,16 @@ use malachite::base::rounding_modes::RoundingMode;
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value;
 
-
-pub(crate) fn r_i(ra: &Rational) -> Result<Integer, FnErr> {
-	Integer::try_from(ra).map_err(|_| Arith("Non-integer given".into()))
+pub(crate) fn r_u(ra: &Rational) -> Result<usize, FnErr> {
+	usize::try_from(ra).map_err(|_| Arith("Non-index given".into()))
 }
 
 pub(crate) fn r_n(ra: &Rational) -> Result<Natural, FnErr> {
 	Natural::try_from(ra).map_err(|_| Arith("Non-natural given".into()))
+}
+
+pub(crate) fn r_i(ra: &Rational) -> Result<Integer, FnErr> {
+	Integer::try_from(ra).map_err(|_| Arith("Non-integer given".into()))
 }
 
 pub(crate) fn r_f(ra: &Rational) -> f64 {

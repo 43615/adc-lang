@@ -1,5 +1,4 @@
 use std::fmt::{Display, Formatter};
-use malachite::Integer;
 use crate::structs::Value;
 
 #[derive(Debug)]
@@ -7,9 +6,9 @@ pub(crate) enum FnErr {
 	Type1(TypeLabel),
 	Type2(TypeLabel, TypeLabel),
 	Type3(TypeLabel, TypeLabel, TypeLabel),
+	Index(usize),
 	Len2(usize, usize),
 	Len3(usize, usize, usize),
-	Index(Integer),
 	Arith(String),
 	Custom(String),
 }
