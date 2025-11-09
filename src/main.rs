@@ -269,6 +269,7 @@ fn main() -> ExitCode {
 								Ok(Finished) => {continue 'repl;}
 								Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
 								Ok(HardQuit(c)) => {return c.into();}
+								Ok(Killed) => unsafe {std::hint::unreachable_unchecked()}
 								Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 							}
 						},
@@ -291,6 +292,7 @@ fn main() -> ExitCode {
 					Ok(Finished) => {continue 'act;}
 					Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
 					Ok(HardQuit(c)) => {return c.into();}
+					Ok(Killed) => unsafe {std::hint::unreachable_unchecked()}
 					Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 				}
 			}
@@ -305,6 +307,7 @@ fn main() -> ExitCode {
 					Ok(Finished) => {continue 'act;}
 					Ok(SoftQuit(c)) => {exit_code = c; continue 'act;}
 					Ok(HardQuit(c)) => {return c.into();}
+					Ok(Killed) => unsafe {std::hint::unreachable_unchecked()}
 					Err(e) => {return runtime_error(format!("Interpreter IO error: {e}"));}
 				}
 			}

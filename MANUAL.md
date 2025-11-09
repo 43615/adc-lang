@@ -60,7 +60,7 @@ The reliance on stacks for storing data naturally leads to a postfix operator or
 - `b → Nz`: `b` creates a number without taking input.
 - `Sa c`: `c` eats a string and doesn't return anything.
 - `d⒭ → Xz`: Command with register access (see [below](#registers)) which returns a value of any type.
-- `Na e`/`Sa e`: Overloaded command, works differently depending on the type(s) of the input(s).
+- `Na e` / `Sa e`: Overloaded command, works differently depending on the type(s) of the input(s).
 
 The "pure" commands that only ever touch the annotated inputs and outputs are called "arithmetic functions", including those that operate on booleans/strings. Other commands behave in ways not shown by this syntax.
 
@@ -86,33 +86,6 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 - `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
 - `_clhist` clears the input history. Does nothing if no history is implemented.
 - **CLI:** uses the IO streams of the process, input uses an additional [line editor](https://crates.io/crates/linefeed). The library may be attached to other streams using a generic interface.
-
-
-# Array polymorphism
-
-Arrays are ordered, contiguous lists of objects with arbitrary length. Due to the fact that the contained objects can themselves be arrays, their dimensionality is unlimited. In ADC, arrays are written `(with parentheses)`. Here's an example of inputting a 2-dimensional array:
-```
-((1 2) (3 4) (5 6))
-```
-
-Arrays can contain arbitrary combinations of object types as well as have arbitrary length and nesting:
-```
-(((()) T 1337) [Sample Text] ())
-```
-
-The crucial feature that makes ADC an array language is that functions can be applied to every element of an array without having to explicitly use iteration:
-`(1 2 3) (4 5 6) *` results in `(4 10 18)`, an additional `2/` results in `(2 5 9)`.
-
-This implicit application of operations is limited to the pure arithmetic functions (although composition by concatenation is equivalent). The traversal procedure is as follows:
-- For monadics, the function is simply applied to every element, preserving their locations in nested arrays.
-- For dyadics and triadics, the resulting nested layout will have the highest dimension of all arguments:
-  - Traverse array(s), for each element:
-  - If the 2 or 3 arguments at the current position are only scalars, compute the function.
-  - If at least one is an array, promote any scalars to arrays of correct length and recurse. Examples:
-    - `(1 2 3) 4 +` and `(1 2 3) (4 4 4) +` are equivalent (`(5 6 7)`).
-    - `(1 (2 3 4)) ((5 6 7) 8) +` and `((1 1 1) (2 3 4)) ((5 6 7) (8 8 8)) +` are equivalent (`((6 7 8) (10 11 12))`).
-  - If there are multiple arrays of unequal length, abort the process.
-- In this implementation, the "recursion" is implemented using an iterative algorithm in heap memory and the "promotion" does not actually allocate a new array. This avoids stack overflow issues on real systems and utilizes a practical minimum amount of memory (tested with recursion depths in the millions). Other interpreter implementations should employ similar algorithms if possible.
 
 
 # Numbers
@@ -188,7 +161,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `NZa NZb % → NZz`: *a* modulo *b*. Errors if *b* = 0.
 - `NZa NZb ~ → (NZy NZz)`: Integer division of *a* by *b*, with quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
 - `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
-- `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers.
+- `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
   - `` `< `` / `` `= `` / `` `> `` are total orders, returning `F` instead of erroring if the types are different.
 - `NNa n → NNz`: Factorial of *a*, 0 ≤ *a* ≤ 2⁶⁴-1.
 - `Sa n → NFz` returns a mathematical constant (to 64-bit float precision):
@@ -199,8 +172,17 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `delta`: First Feigenbaum constant (δ)
   - `alpha`: Second Feigenbaum constant (α)
   - `epsilon`: [Machine epsilon](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats.
+  - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
 - `NNa N → NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance. Still available in [restricted mode](#os-commands), as meaningful attacks are impossible.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
+- `NFa NZb t → NFz`: Monadic trigonometric/hyperbolic functions of *a* (angles in radians), selected by *b*:
+  - `1`: sine
+  - `2`: cosine
+  - `3`: tangent
+  - `4`: hyperbolic sine
+  - `5`: hyperbolic cosine
+  - `6`: hyperbolic tangent
+  - Negative *b*: corresponding inverse functions
 
 
 # Booleans
@@ -222,8 +204,8 @@ Operations on booleans are overloaded variants of arithmetic functions:
 - `Ba Bb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (z = length + 1).
 - `Ba NPb % → BBz`: *b*th bit of *a*.
 - `Ba NPb ~ → (By Bz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
-- `Xa Yb BBc | → Zz` selects *a* if *c* is `T`, or *b* if `F`.
-  - `Xa Yb Bc | → (Zz)` makes an array of *a* or *b* for every bit in *c*.
+- `Xa Yb BBc | → Zz` selects *a* if *c* = `T`, or *b* if *c* = `F`.
+  - `Xa Yb Bc | → Az` makes an array of *a* or *b* for every bit in *c*.
 - `Ba Bb < → BBz` / `Ba Bb = → BBz` / `Ba Bb > → BBz`: comparisons of booleans. Binary value comparison if lengths are equal, length comparison otherwise.
 
 
@@ -254,7 +236,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa NPb / → Sz` truncates *a* to *b* characters. No effect if *b* exceeds the length.
 - `Sa ! → Sz` inverts the case of all characters in *a*.
 - `Sa Sb ^ → NZz` finds the first occurrence of *b* in *a* and returns its position, `` `1 `` if not found.
-  - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here](https://docs.rs/regex/latest/regex/index.html#syntax).
+  - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here](https://docs.rs/regex/latest/regex/index.html#syntax), ensure that backslashes are escaped correctly.
 - `Sa v → Sz` reverses *a*.
 - `Sa g → NPz`: length of *a*.
   - `` Sa `g → NPz ``: byte length of *a*.
@@ -264,6 +246,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa NPb ~ → (Sy Sz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
 - `Sa Sb Sc | → Sz` replaces all occurrences of *b* in *a* with *c*. Empty *b* is found everywhere.
   - `` Sa Sb Sc `| → Sz `` replaces all matches of regex *b* in *a* with *c*. Replacement string syntax is documented [here](https://docs.rs/regex/latest/regex/struct.Regex.html#replacement-string-syntax).
+- `Sa Sb < → BBz` / `Sa Sb = → BBz` / `Sa Sb > → BBz`: comparisons of strings. Per-character comparison if lengths are equal, length comparison otherwise ("shortlex").
 
 
 # Stack operations
@@ -278,6 +261,33 @@ Essential commands for interacting with values already on the stack, or the stac
 - `fz → NPz` returns the current depth of the stack.
 - `fr` reverses the entire stack.
 - `NPa fR` reverses the top *a* values.
+
+
+# Array polymorphism
+
+Arrays are ordered, contiguous lists of objects with arbitrary length. Due to the fact that the contained objects can themselves be arrays, their dimensionality is unlimited. In ADC, arrays are written `(with parentheses)`. Here's an example of inputting a 2-dimensional array:
+```
+((1 2) (3 4) (5 6))
+```
+
+Arrays can contain arbitrary combinations of object types as well as have arbitrary length and nesting:
+```
+(((()) T 1337) [Sample Text] ())
+```
+
+The crucial feature that makes ADC an array language is that functions can be applied to every element of an array without having to explicitly use iteration:
+`(1 2 3) (4 5 6) *` results in `(4 10 18)`, an additional `2/` results in `(2 5 9)`.
+
+This implicit application of operations is limited to the pure arithmetic functions (although composition by concatenation is possible). The traversal procedure is as follows:
+- For monadics, the function is simply applied to every element, preserving their locations in nested arrays.
+- For dyadics and triadics, the resulting nested layout will have the highest dimension of all arguments:
+  - Traverse array(s), for each element:
+  - If the 2 or 3 arguments at the current position are only scalars, compute the function.
+  - If at least one is an array, promote any scalars to arrays of correct length and recurse. Examples:
+    - `(1 2 3) 4 +` and `(1 2 3) (4 4 4) +` are equivalent (`(5 6 7)`).
+    - `(1 (2 3 4)) ((5 6 7) 8) +` and `((1 1 1) (2 3 4)) ((5 6 7) (8 8 8)) +` are equivalent (`((6 7 8) (10 11 12))`).
+  - If there are multiple arrays of unequal length, abort the process.
+- In this implementation, the "recursion" is implemented using an iterative algorithm in heap memory and the "promotion" does not actually allocate a new array. This avoids stack overflow issues on real systems and utilizes a practical minimum amount of memory (tested with recursion depths in the millions). Other interpreter implementations should employ similar algorithms if possible.
 
 
 # Array operations and indexing
@@ -316,9 +326,10 @@ Strings containing ADC commands are called macros, to differentiate them from da
 ## Multithreading
 
 Macro execution may also be delegated to a separate thread. Child threads are attached to [registers](#registers) in the parent thread and operate on their own `State`, the main stack of which is pushed to the register when complete.
-- `SMa X⒭`/`Sma NNb X⒭`/`SMa Bb X⒭` execute macros in a thread, syntax identical to `x`. The child starts with a blank `State`, or a copy of the parent's if prefixed with `` ` ``.
-- `j⒭` waits for the thread to finish, either by exhausting its commands or quitting. Then, the contents of the child's main stack are pushed to the register.
-- `` `j⒭ `` kills the thread. The child interpreter polls the kill signal when parsing commands or sleeping with `w`. Also pushes the stack to the register.
+- `SMa X⒭` / `Sma NNb X⒭` / `SMa Bb X⒭` execute macros in a thread, syntax identical to `x`. The child starts with a blank `State`, or a copy of the parent's if prefixed with `` ` ``.
+- `j⒭` (join) waits for the thread to finish, either by exhausting its commands or quitting. Then, the contents of the child's main stack are pushed to the register.
+- `` `j⒭ `` kills the thread (effective immediately) and also pushes the main stack to the register. A killed thread will kill its children, propagating to all decscendants.
+- `_joinall` and `_killall` perform the above commands for all child threads.
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
 - Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand-)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
 - [OS commands](#os-commands) are disabled in child threads to prevent any corruption of OS resources. [IO streams](#input-and-output) are safely shared using a mutex (note that `?` is a blocking operation).
@@ -332,7 +343,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
   - `` `q `` is a "hard" quit, which may be handled differently.
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
-- `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving them unchanged. Use after large operations.
+- `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving actual data unchanged. Use after large operations.
 - `_clall` clears the entire current state. Thread handles are unaffected.
 
 
@@ -371,7 +382,7 @@ Most strings involved here are not guaranteed to be valid UTF-8. When saving out
 - An OS command consists of an executable name/path with arguments separated by spaces. Any initial words containing `=` are interpreted as environment variable overrides for the child process.
 - Child processes inherit the interpreter's environment variables (unless overridden) and working directory.
 - Waiting for child processes to finish blocks the interpreter. Unexpectedly non-terminating processes need to be dealt with by OS-specific external means.
-- `Sa Sb _run → (NNx Sy Sz)` runs OS command *a* as a child process using *b* as stdin, waiting for it to finish. *x* is the exit code, *y* and *z* are stdout and stderr.
+- `Sa Sb _run → (NNx Sy Sz)` runs OS command *b* as a child process using *a* as stdin, waiting for it to finish. *x* is the exit code, *y* and *z* are stdout and stderr.
 - `Sa Sb _spawn → NNz` spawns the process but doesn't wait for it to finish, instead returning its process ID. The following commands can only control processes that were created in this way by the current interpreter.
 - `NNa _wait → (NNx Sy Sz)` waits for PID *a* to exit and returns its output.
 - `NNa _exited → BBz` returns `T` if the process has exited.

@@ -283,7 +283,7 @@ dya!(pow
 			}
 		}
 		else {
-			let (fa, fb) = (r_f(ra), r_f(rb));
+			let (fa, fb) = (r_f(ra)?, r_f(rb)?);
 			f_r(fa.powf(fb)).map(N)
 		}
 	},
@@ -329,7 +329,7 @@ mon!(sqrt
 			Ok(N(rz))
 		}
 		else {
-			f_r(r_f(ra).sqrt()).map(N)
+			f_r(r_f(ra)?.sqrt()).map(N)
 		}
 	},
 
@@ -357,12 +357,12 @@ dya!(root
 				}
 			}
 			else {
-				let (fa, fb) = (r_f(ra), r_f(rb));
+				let (fa, fb) = (r_f(ra)?, r_f(rb)?);
 				f_r(fa.powf(fb.recip())).map(N)
 			}
 		}
 		else {
-			let (fa, fb) = (r_f(ra), r_f(rb));
+			let (fa, fb) = (r_f(ra)?, r_f(rb)?);
 			f_r(fa.powf(fb.recip())).map(N)
 		}
 	}
@@ -409,7 +409,7 @@ dya!(logb
 			Ok(N(iz.into()))
 		}
 		else {
-			let (fa, fb) = (r_f(ra), r_f(rb));
+			let (fa, fb) = (r_f(ra)?, r_f(rb)?);
 			f_r(
 				match fb {
 					std::f64::consts::E => ra.approx_log(),
@@ -652,5 +652,52 @@ mon!(fac
 				_ => {return Err(Arith(format!("Unknown constant {sa}")));}
 			}
 		)?))
+	}
+);
+
+dya!(trig
+	N(ra), N(rb), _ => {
+		let ib = r_i(rb)?;
+		match i8::try_from(&ib) {
+			Ok(1) => {
+				Ok(N(f_r(r_f(ra)?.sin())?))
+			},
+			Ok(2) => {
+				Ok(N(f_r(r_f(ra)?.cos())?))
+			},
+			Ok(3) => {
+				Ok(N(f_r(r_f(ra)?.tan())?))
+			},
+			Ok(4) => {
+				Ok(N(f_r(r_f(ra)?.sinh())?))
+			},
+			Ok(5) => {
+				Ok(N(f_r(r_f(ra)?.cosh())?))
+			},
+			Ok(6) => {
+				Ok(N(f_r(r_f(ra)?.tanh())?))
+			},
+			Ok(-1) => {
+				Ok(N(f_r(r_f(ra)?.asin())?))
+			},
+			Ok(-2) => {
+				Ok(N(f_r(r_f(ra)?.acos())?))
+			},
+			Ok(-3) => {
+				Ok(N(f_r(r_f(ra)?.atan())?))
+			},
+			Ok(-4) => {
+				Ok(N(f_r(r_f(ra)?.asinh())?))
+			},
+			Ok(-5) => {
+				Ok(N(f_r(r_f(ra)?.acosh())?))
+			},
+			Ok(-6) => {
+				Ok(N(f_r(r_f(ra)?.atanh())?))
+			},
+			_ => {
+				Err(Arith(format!("Unknown function number {ib}")))
+			}
+		}
 	}
 );

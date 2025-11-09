@@ -145,6 +145,18 @@ impl Display for Value {
 	}
 }
 
+/// Tries to convert register index ([`Rational`]) to a string if it was likely set from one, or displays the number with automatic format
+pub fn reg_index_nice(ri: &Rational) -> String {
+	use malachite::base::num::conversion::traits::PowerOf2Digits;
+	Natural::try_from(ri).ok().and_then(|n| {	//if ri is a natural
+		let bytes: Vec<u8> = n.to_power_of_2_digits_desc(8);	//look at its bytes
+		str::from_utf8(&bytes).ok().map(|s| String::from("[") + s + "]")	//if it parses to a string, ri was likely set from one
+	})
+		.unwrap_or_else(|| {
+			crate::num::nauto(ri, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)	//or just return the number in canonical notation
+		})
+}
+
 pub type ThreadResult = (Vec<Arc<Value>>, std::io::Result<crate::ExecResult>);
 
 #[derive(Default, Debug)]
@@ -241,6 +253,51 @@ impl RegStore {
 		for (ori, oreg) in other.high.drain().filter_map(|(ori, oreg)| (!oreg.v.is_empty()).then_some((ori, Register {v: oreg.v, th: None}))) {
 			self.high.insert(ori, oreg);
 		}
+	}
+
+	/// Joins all thread handles, `kill = true` sends kill signals.
+	/// 
+	/// Returns messages from any unhappy terminations, same as the `j` command.
+	pub fn end_threads(&mut self, kill: bool) -> Vec<String> {
+		use crate::ExecResult::*;
+		
+		let mut res = Vec::new();
+		
+		for (ri, reg) in
+			self.low.iter_mut().enumerate().map(|(ri, reg)| (Rational::from(ri), reg))
+				.chain(self.high.iter_mut().map(|(ri, reg)| (ri.clone(), reg)))
+		{
+			if let Some((jh, tx)) = reg.th.take() {
+				if kill {
+					tx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+				}
+				match jh.join() {
+					Ok(mut tr) => {
+						match tr.1 {
+							Err(e) => {
+								res.push(format!("IO error in thread {}: {}", reg_index_nice(&ri), e));
+							},
+							Ok(SoftQuit(c)) if c != 0 => {
+								res.push(format!("Thread {} quit with code {}", reg_index_nice(&ri), c));
+							},
+							Ok(HardQuit(c)) if c != 0 => {
+								res.push(format!("Thread {} hard-quit with code {}", reg_index_nice(&ri), c));
+							},
+							Ok(Killed) => {
+								res.push(format!("Thread {} was killed", reg_index_nice(&ri)));
+							},
+							_ => {}
+						}
+						
+						reg.v.append(&mut tr.0);
+					},
+					Err(e) => {
+						std::panic::resume_unwind(e);
+					}
+				}
+			}
+		}
+		res
 	}
 }
 impl Default for RegStore {
@@ -499,7 +556,7 @@ impl Utf8Iter<'_> {
 				(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//traverse nested arrays
 					if let Err(e) = lenck2(sec, top) { return Err(e.to_string()); }
 					let mut stk = vec![(PromotingIter::from(sec), PromotingIter::from(top))];
-					let mut res = Vec::new();
+					let mut res = vec![];
 
 					while let Some((ia, ib)) = stk.last_mut() {	//keep operating on the top iters
 						if let (Some(va), Some(vb)) = (ia.next(), ib.next()) {	//advance them
@@ -525,10 +582,10 @@ impl Utf8Iter<'_> {
 									}
 								},
 								(_, S(_)) => {	//legitimate strings are already covered by monadic form attempt
-									return Err("Unexpected string in second array".into());
+									return Err("Unexpected string in top array".into());
 								},
 								_ => {
-									return Err(format!("Expected pairs of only strings and non-strings, found {} and {} in arrays", TypeLabel::from(sec), TypeLabel::from(top)));
+									return Err(format!("Expected only matching strings and non-strings, found {} and {} in arrays", TypeLabel::from(sec), TypeLabel::from(top)));
 								}
 							}
 						}

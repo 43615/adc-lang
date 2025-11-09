@@ -4,6 +4,7 @@ use std::cmp::Ordering;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode;
+
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value;
 
@@ -19,8 +20,14 @@ pub(crate) fn r_i(ra: &Rational) -> Result<Integer, FnErr> {
 	Integer::try_from(ra).map_err(|_| Arith("Non-integer given".into()))
 }
 
-pub(crate) fn r_f(ra: &Rational) -> f64 {
-	f64::rounding_from(ra, RoundingMode::Nearest).0
+pub(crate) fn r_f(ra: &Rational) -> Result<f64, FnErr> {
+	use malachite::rational::conversion::primitive_float_from_rational::FloatConversionError;
+	match f64::try_from(ra) {
+		Ok(f) => {Ok(f)},
+		Err(FloatConversionError::Inexact) => {Ok(f64::rounding_from(ra, RoundingMode::Nearest).0)},
+		Err(FloatConversionError::Overflow) => {Err(Arith("Value is too large for 64-bit float".into()))},
+		Err(FloatConversionError::Underflow) => {Err(Arith("Value is too small for 64-bit float".into()))}
+	}
 }
 
 pub(crate) fn f_r(fa: f64) -> Result<Rational, FnErr> {

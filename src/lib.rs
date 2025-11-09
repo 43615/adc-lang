@@ -26,7 +26,7 @@ use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{DivRem, NegAssign, Pow};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
-use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, PowerOf2Digits, RoundingFrom, WrappingFrom};
+use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
 use malachite::base::num::random::RandomPrimitiveInts;
 use malachite::base::rational_sequences::RationalSequence;
 use malachite::base::rounding_modes::RoundingMode;
@@ -211,7 +211,7 @@ const CMDS: [Command; 256] = {
 		Exec,		Exec,		Wrong,		Cmd(cls),	Exec,		Wrong,		Exec,		Fn1(log),	Wrong,		Cmd(si),	ExecR,		Cmd(sk),	ExecR,		Cmd(sm),	Fn1(fac),	Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Exec,		Exec,		Cmd(rev),	ExecR,		Wrong,		Wrong,		Fn1(sqrt),	Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
+		Exec,		Exec,		Cmd(rev),	ExecR,		Fn2(trig),	Wrong,		Fn1(sqrt),	Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
 
 		//~~description of what i'm doing:~~ non-ASCII:
 		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
@@ -255,16 +255,6 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 	}
 }
 
-fn reg_index_nice(ri: &Rational) -> String {
-	Natural::try_from(ri).ok().and_then(|n| {	//if ri is a natural
-		let bytes: Vec<u8> = n.to_power_of_2_digits_desc(8);	//look at its bytes
-		str::from_utf8(&bytes).ok().map(|s| String::from("[") + s + "]")	//if it parses to a string, ri was likely set from one
-	})
-		.unwrap_or_else(|| {
-			num::nauto(ri, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)	//or just return the number in canonical notation
-		})
-}
-
 /// Results of running [`interpreter`], wrappers should handle these differently
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[must_use] pub enum ExecResult {
@@ -275,7 +265,10 @@ fn reg_index_nice(ri: &Rational) -> String {
 	SoftQuit(u8),
 
 	/// Complete exit requested (`q), terminate
-	HardQuit(u8)
+	HardQuit(u8),
+
+	/// Received kill signal
+	Killed
 }
 
 /// Safe wrapper around [`interpreter`], see its documentation.
@@ -301,7 +294,7 @@ pub fn interpreter_no_os(
 ///   - `io.1`: Output, written to by printing commands
 ///   - `io.2`: Error messages, one per line
 /// - `ll`: Level of verbosity for `io.2`
-/// - `kill`: Receiver for a kill signal from a parent thread, effect is practically immediate
+/// - `kill`: Receiver for a kill signal from a parent thread, effect is practically immediate. `Some(_)` will also enable `restrict`.
 /// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
 /// # Errors
@@ -447,7 +440,11 @@ pub unsafe fn interpreter(
 			if let Some(rx) = kill {	//check kill signal
 				match rx.try_recv() {
 					Ok(()) => {	//killed by parent
-						return Ok(Finished);
+						#[expect(unused_assignments)]
+						for s in st.regs.end_threads(true) {
+							valerr!('j', s);
+						}
+						return Ok(Killed);
 					},
 					Err(TryRecvError::Empty) => {	//not killed
 						//do nothing
@@ -569,7 +566,7 @@ pub unsafe fn interpreter(
 					}
 				},
 				Exec => {
-					debug!("Special command {}{}", if alt {"alt-"} else {""}, b as char);
+					debug!("Command {}{}", if alt {"alt-"} else {""}, b as char);
 					match b {
 						b'`' => {	//alt prefix
 							alt = true;
@@ -1013,7 +1010,11 @@ pub unsafe fn interpreter(
 										if let Some(rx) = kill {
 											match rx.recv_timeout(dur) {
 												Ok(()) => {	//killed by parent
-													return Ok(Finished);
+													#[expect(unused_assignments)]
+													for s in st.regs.end_threads(true) {
+														valerr!('j', s);
+													}
+													return Ok(Killed);
 												},
 												Err(RecvTimeoutError::Timeout) => {	//wait completed, not killed
 													//do nothing
@@ -1082,6 +1083,16 @@ pub unsafe fn interpreter(
 								},
 								b"th" => {
 									push!(Value::S(th_name.clone()));
+								},
+								b"joinall" => {
+									for s in st.regs.end_threads(false) {
+										valerr!('j', s);
+									}
+								},
+								b"killall" => {
+									for s in st.regs.end_threads(true) {
+										valerr!('j', s);
+									}
 								},
 								b"trim" => {
 									st.trim();
@@ -1153,7 +1164,7 @@ pub unsafe fn interpreter(
 							}
 						)
 					};
-					debug!("Special register command {}{}", if alt {"alt-"} else {""}, b as char);
+					debug!("Register command {}{}", if alt {"alt-"} else {""}, b as char);
 					match b {
 						b'Z' => {	//stack depth
 							push!(Value::N(
@@ -1281,8 +1292,14 @@ pub unsafe fn interpreter(
 											Err(e) => {
 												valerr!('j', "IO error in thread {}: {}", reg_index_nice(&ri), e);
 											},
-											Ok(SoftQuit(c)) | Ok(HardQuit(c)) if c != 0 => {
-												valerr!('j', "Thread {} exited with code {}", reg_index_nice(&ri), c);
+											Ok(SoftQuit(c)) if c != 0 => {
+												valerr!('j', "Thread {} quit with code {}", reg_index_nice(&ri), c);
+											},
+											Ok(HardQuit(c)) if c != 0 => {
+												valerr!('j', "Thread {} hard-quit with code {}", reg_index_nice(&ri), c);
+											},
+											Ok(Killed) => {
+												valerr!('j', "Thread {} was killed", reg_index_nice(&ri));
 											},
 											_ => {}
 										}

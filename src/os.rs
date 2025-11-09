@@ -455,7 +455,7 @@ oscmd!(run, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::S(command), Value::S(input)) => {
+				(Value::S(input), Value::S(command)) => {
 					match try_child(command, input) {
 						Ok(child) => {
 							let pid = child.id();
@@ -504,7 +504,7 @@ oscmd!(spawn, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::S(command), Value::S(input)) => {
+				(Value::S(input), Value::S(command)) => {
 					let child = try_child(command, input).inspect_err(|_| { st.mstk.push(va); st.mstk.push(vb); })?;
 					let pid = child.id();
 					unsafe { #[expect(static_mut_refs)] PIDS.insert(pid, child); }
@@ -575,15 +575,12 @@ oscmd!(exited, st {
 		if let Value::N(ra) = &*va {
 			if let Ok(pid) = u32::try_from(ra) {
 				if let Some(child) = unsafe { #[expect(static_mut_refs)] PIDS.get_mut(&pid) } {
-					let mut bz = BitVec::new();
 					match child.try_wait() {
 						Ok(Some(_)) => {
-							bz.push(true);
-							Ok(vec![Value::B(bz)])
+							Ok(vec![Value::B(bitvec![1])])
 						},
 						Ok(None) => {
-							bz.push(false);
-							Ok(vec![Value::B(bz)])
+							Ok(vec![Value::B(bitvec![0])])
 						},
 						Err(e) => {
 							st.mstk.push(va);
