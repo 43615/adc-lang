@@ -156,7 +156,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `NFa NFb V → NFz`: Principal *b*th root of *a*. Errors if *b* = 0, *a* = 0 and *b* < 0, or *a* < 0 and *b* ≡ 0 mod 2.
   - `Na NZb V → Nz`: Exact root if *a* is a perfect *b*th power and 0 ≤ |*b*| ≤ 2⁶⁴-1.
 - `Na g → NFz`: Natural logarithm of *a*. Errors if *a* ≤ 0.
-- `NFa NFb G → NFz`: Base-*b* logarithm of *a*. Errors if *a* ≤ 0 or *b* = 1.
+- `Na Nb G → NFz`: Base-*b* logarithm of *a*. Errors if *a* ≤ 0 or *b* = 1.
   - `Na Nb G → NZz`: Exact logarithm if *a* is an integer power of *b*.
 - `NZa NZb % → NZz`: *a* modulo *b*. Errors if *b* = 0.
 - `NZa NZb ~ → (NZy NZz)`: Integer division of *a* by *b*, with quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
@@ -326,12 +326,13 @@ Strings containing ADC commands are called macros, to differentiate them from da
 ## Multithreading
 
 Macro execution may also be delegated to a separate thread. Child threads are attached to [registers](#registers) in the parent thread and operate on their own `State`, the main stack of which is pushed to the register when complete.
-- `SMa X⒭` / `Sma NNb X⒭` / `SMa Bb X⒭` execute macros in a thread, syntax identical to `x`. The child starts with a blank `State`, or a copy of the parent's if prefixed with `` ` ``.
+- `SMa X⒭` executes a (plain) macro in a child thread. The child starts with a blank `State`, or a copy of the parent's if prefixed with `` ` ``.
 - `j⒭` (join) waits for the thread to finish, either by exhausting its commands or quitting. Then, the contents of the child's main stack are pushed to the register.
-- `` `j⒭ `` kills the thread (effective immediately) and also pushes the main stack to the register. A killed thread will kill its children, propagating to all decscendants.
-- `_joinall` and `_killall` perform the above commands for all child threads.
+- `` `j⒭ `` kills the thread (effective immediately) and also pushes the main stack to the register.
+- `_joinall` and `_killall` perform the above commands for all current child threads.
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
-- Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand-)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
+- Joining and killing is propagated to grandchild threads, zombie threads are impossible.
+- Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
 - [OS commands](#os-commands) are disabled in child threads to prevent any corruption of OS resources. [IO streams](#input-and-output) are safely shared using a mutex (note that `?` is a blocking operation).
 
 

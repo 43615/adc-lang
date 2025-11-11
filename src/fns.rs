@@ -409,15 +409,7 @@ dya!(logb
 			Ok(N(iz.into()))
 		}
 		else {
-			let (fa, fb) = (r_f(ra)?, r_f(rb)?);
-			f_r(
-				match fb {
-					std::f64::consts::E => ra.approx_log(),
-					2f64 => fa.log2(),
-					10f64 => fa.log10(),
-					_ => fa.log(fb)
-				}
-			).map(N)
+			f_r(ra.approx_log() / rb.approx_log()).map(N)
 		}
 	},
 

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, RwLock, mpsc::Sender};
+use std::thread::JoinHandle;
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
 use malachite::base::num::basic::traits::{Zero, One};
@@ -163,8 +164,8 @@ pub type ThreadResult = (Vec<Arc<Value>>, std::io::Result<crate::ExecResult>);
 pub struct Register {
 	/// Stack of values, [`Arc`] to allow shallow copies
 	pub v: Vec<Arc<Value>>,
-	/// Thread handle with result values, kill signal
-	pub th: Option<(std::thread::JoinHandle<ThreadResult>, Sender<()>)>
+	/// Thread handle with result values, kill signal, join signal. Sending or dropping the join signal is required before joining.
+	pub th: Option<(JoinHandle<ThreadResult>, Sender<()>, Sender<()>)>
 }
 /// Clone without thread handles since those are unique
 impl Clone for Register {
@@ -255,7 +256,7 @@ impl RegStore {
 		}
 	}
 
-	/// Joins all thread handles, `kill = true` sends kill signals.
+	/// Joins all thread handles, `kill = true` first sends kill signals.
 	/// 
 	/// Returns messages from any unhappy terminations, same as the `j` command.
 	pub fn end_threads(&mut self, kill: bool) -> Vec<String> {
@@ -267,10 +268,11 @@ impl RegStore {
 			self.low.iter_mut().enumerate().map(|(ri, reg)| (Rational::from(ri), reg))
 				.chain(self.high.iter_mut().map(|(ri, reg)| (ri.clone(), reg)))
 		{
-			if let Some((jh, tx)) = reg.th.take() {
+			if let Some((jh, ktx, jtx)) = reg.th.take() {
 				if kill {
-					tx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+					ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
 				}
+				jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
 				match jh.join() {
 					Ok(mut tr) => {
 						match tr.1 {

@@ -58,7 +58,7 @@ pub trait ReadLine {
 	/// [`ErrorKind::Interrupted`] causes `?` to error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
 	fn read_line(&mut self) -> std::io::Result<String>;
 
-	/// If [`Self`] has a history, clear it.
+	/// If [`Self`] implements a history, clear it.
 	fn clear_history(&mut self);
 }
 impl<T: BufRead> ReadLine for T {
@@ -126,17 +126,6 @@ impl IOStreams {
 			Box::new(std::io::stderr())
 		)
 	}
-}
-
-/// How much information to output on stderr
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum LogLevel {
-	/// Only output error messages
-	Normal,
-	/// Report every command (without values) 
-	Debug,
-	/// No error messages, stderr disabled
-	Quiet
 }
 
 lazy_static::lazy_static! {
@@ -255,6 +244,17 @@ fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 	}
 }
 
+/// How much information to output on stderr
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum LogLevel {
+	/// Only output error messages
+	Normal,
+	/// Report every command (without values)
+	Debug,
+	/// No error messages, stderr disabled
+	Quiet
+}
+
 /// Results of running [`interpreter`], wrappers should handle these differently
 #[derive(Clone, Copy, Debug, PartialEq)]
 #[must_use] pub enum ExecResult {
@@ -294,7 +294,8 @@ pub fn interpreter_no_os(
 ///   - `io.1`: Output, written to by printing commands
 ///   - `io.2`: Error messages, one per line
 /// - `ll`: Level of verbosity for `io.2`
-/// - `kill`: Receiver for a kill signal from a parent thread, effect is practically immediate. `Some(_)` will also enable `restrict`.
+/// - `kill`: Kill signal, receiving terminates the interpreter. Polled as often as possible, effect is practically immediate.
+///   - `Some(_)` will also enable `restrict`, as it's unsafe or impossible to kill the thread while performing some OS interactions.
 /// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
 /// # Errors
@@ -441,7 +442,7 @@ pub unsafe fn interpreter(
 				match rx.try_recv() {
 					Ok(()) => {	//killed by parent
 						#[expect(unused_assignments)]
-						for s in st.regs.end_threads(true) {
+						for s in st.regs.end_threads(true) {	//propagate to children
 							valerr!('j', s);
 						}
 						return Ok(Killed);
@@ -1011,7 +1012,7 @@ pub unsafe fn interpreter(
 											match rx.recv_timeout(dur) {
 												Ok(()) => {	//killed by parent
 													#[expect(unused_assignments)]
-													for s in st.regs.end_threads(true) {
+													for s in st.regs.end_threads(true) {	//propagate to children
 														valerr!('j', s);
 													}
 													return Ok(Killed);
@@ -1227,68 +1228,58 @@ pub unsafe fn interpreter(
 							if let Some(true) = st.regs.try_get(&ri).map(|reg| reg.th.is_some()) {
 								valerr!('X', "Register {} is already running a thread", reg_index_nice(&ri));
 							}
-							else if let Some(top) = st.mstk.pop() {
-								let sec = st.mstk.pop();
-								match Utf8Iter::from_vals(&top, sec.as_deref()) {
-									Ok((stk, ret)) => {
-										if let Some(sec) = sec && ret {	//sec was not used, return
-											st.mstk.push(sec);
-										}
+							else if let Some(va) = st.mstk.pop() {
+								if let Value::S(sa) = &*va {
+									let th_start = sa.to_owned().into();
+									let (ktx, krx) = std::sync::mpsc::channel::<()>();
+									let (jtx, jrx) = std::sync::mpsc::channel::<()>();
+									let tb = std::thread::Builder::new().name(format!("{th_name}{}: ", reg_index_nice(&ri)));
+									let mut th_st = if alt { st.clone() } else { State::default() };
+									let th_io = Arc::clone(&io);
 
-										let (tx, rx) = std::sync::mpsc::channel::<()>();
-										let tb = std::thread::Builder::new().name(format!("{th_name}{}: ", reg_index_nice(&ri)));
-										let mut th_st = if alt { st.clone() } else { State::default() };
-										let th_io = Arc::clone(&io);
+									match tb.spawn(move || {
+										let th_res = interpreter_no_os(&mut th_st, th_start, Arc::clone(&th_io), ll, Some(&krx));
 
-										match tb.spawn(move || {
-											let mut th_res = (Vec::new(), Ok(Finished));
-
-											'all: for (th_start, th_count) in stk {
-												for _ in malachite::natural::exhaustive::exhaustive_natural_range(Natural::ZERO, th_count) {
-													match interpreter_no_os(&mut th_st, th_start.clone(), Arc::clone(&th_io), ll, Some(&rx)) {
-														Ok(Finished) => {continue;},
-														Ok(er) => {
-															th_res.1 = Ok(er);
-															break 'all;
-														},
-														Err(e) => {
-															th_res.1 = Err(e);
-															break 'all;
-														}
-													}
-												}
+										let _ = jrx.recv();	//wait for join signal
+										th_st.regs.end_threads(	//join children
+											matches!(th_res, Ok(Killed) | Err(_))	//propagate kill or io error
+											||
+											match krx.try_recv() {	//check for unprocessed kill signal
+												Ok(()) => { true },
+												Err(TryRecvError::Empty) => { false },
+												Err(TryRecvError::Disconnected) => { unreachable!() }	//parent should never disconnect
 											}
+										);
 
-											th_res.0 = th_st.mstk;
-											th_res
-										}) {
-											Ok(jh) => {
-												st.regs.get_mut(&ri).th = Some((jh, tx));
-											},
-											Err(e) => {
-												valerr!('X', "Can't spawn child thread: {}", e);
-											}
+										(th_st.mstk, th_res)
+									}) {
+										Ok(jh) => {
+											st.regs.get_mut(&ri).th = Some((jh, ktx, jtx));
+										},
+										Err(e) => {
+											valerr!('X', "Can't spawn child thread: {}", e);
 										}
-									},
-									Err(e) => {
-										if let Some(sec) = sec {st.mstk.push(sec);}
-										st.mstk.push(top);
-										synerr!('X', "{}", e);
 									}
+								}
+								else {
+									let ta = TypeLabel::from(&*va);
+									st.mstk.push(va);
+									synerr!('X', "Expected a string, {} given", ta);
 								}
 							}
 							else {
-								synerr!('X', "Expected 1 or 2 arguments, 0 given");
+								synerr!('X', "Expected 1 argument, 0 given");
 							}
 						},
 						b'j' => {
-							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some((jh, tx)) = reg.th.take() {
+							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some((jh, ktx, jtx)) = reg.th.take() {
 								if alt {
-									tx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+									ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
 								}
+								jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
 								match jh.join() {
-									Ok(mut res) => {
-										match res.1 {
+									Ok(mut tr) => {
+										match tr.1 {
 											Err(e) => {
 												valerr!('j', "IO error in thread {}: {}", reg_index_nice(&ri), e);
 											},
@@ -1304,7 +1295,7 @@ pub unsafe fn interpreter(
 											_ => {}
 										}
 
-										reg.v.append(&mut res.0);
+										reg.v.append(&mut tr.0);
 									},
 									Err(e) => {
 										std::panic::resume_unwind(e);
@@ -1316,7 +1307,7 @@ pub unsafe fn interpreter(
 							}
 						},
 						b'J' => {
-							if let Some(Some((jh, _))) = st.regs.try_get(&ri).map(|reg| &reg.th) {
+							if let Some(Some((jh, _, _))) = st.regs.try_get(&ri).map(|reg| &reg.th) {
 								let mut bz = BitVec::new();
 								bz.push(jh.is_finished());
 								push!(Value::B(bz));
