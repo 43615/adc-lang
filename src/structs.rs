@@ -264,29 +264,29 @@ impl RegStore {
 		
 		let mut res = Vec::new();
 		
-		for (ri, reg) in
-			self.low.iter_mut().enumerate().map(|(ri, reg)| (Rational::from(ri), reg))
-				.chain(self.high.iter_mut().map(|(ri, reg)| (ri.clone(), reg)))
+		for (ri_nice, reg) in
+			self.low.iter_mut().enumerate().map(|(ri, reg)| (reg_index_nice(&Rational::from(ri)), reg))
+				.chain(self.high.iter_mut().map(|(ri, reg)| (reg_index_nice(ri), reg)))
 		{
 			if let Some((jh, ktx, jtx)) = reg.th.take() {
 				if kill {
-					ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+					ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
 				}
-				jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+				jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
 				match jh.join() {
 					Ok(mut tr) => {
 						match tr.1 {
 							Err(e) => {
-								res.push(format!("IO error in thread {}: {}", reg_index_nice(&ri), e));
+								res.push(format!("IO error in thread {}: {}", ri_nice, e));
 							},
 							Ok(SoftQuit(c)) if c != 0 => {
-								res.push(format!("Thread {} quit with code {}", reg_index_nice(&ri), c));
+								res.push(format!("Thread {} quit with code {}", ri_nice, c));
 							},
 							Ok(HardQuit(c)) if c != 0 => {
-								res.push(format!("Thread {} hard-quit with code {}", reg_index_nice(&ri), c));
+								res.push(format!("Thread {} hard-quit with code {}", ri_nice, c));
 							},
 							Ok(Killed) => {
-								res.push(format!("Thread {} was killed", reg_index_nice(&ri)));
+								res.push(format!("Thread {} was killed", ri_nice));
 							},
 							_ => {}
 						}

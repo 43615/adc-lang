@@ -1238,11 +1238,11 @@ pub unsafe fn interpreter(
 									let th_io = Arc::clone(&io);
 
 									match tb.spawn(move || {
-										let th_res = interpreter_no_os(&mut th_st, th_start, Arc::clone(&th_io), ll, Some(&krx));
+										let th_res = interpreter_no_os(&mut th_st, th_start, th_io, ll, Some(&krx));
 
 										let _ = jrx.recv();	//wait for join signal
 										th_st.regs.end_threads(	//join children
-											matches!(th_res, Ok(Killed) | Err(_))	//propagate kill or io error
+											th_res.is_err()	//kill on io error
 											||
 											match krx.try_recv() {	//check for unprocessed kill signal
 												Ok(()) => { true },
@@ -1257,6 +1257,7 @@ pub unsafe fn interpreter(
 											st.regs.get_mut(&ri).th = Some((jh, ktx, jtx));
 										},
 										Err(e) => {
+											st.mstk.push(va);
 											valerr!('X', "Can't spawn child thread: {}", e);
 										}
 									}
@@ -1272,25 +1273,26 @@ pub unsafe fn interpreter(
 							}
 						},
 						b'j' => {
+							let ri_nice = reg_index_nice(&ri);
 							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some((jh, ktx, jtx)) = reg.th.take() {
 								if alt {
-									ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+									ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
 								}
-								jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", reg_index_nice(&ri)));
+								jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
 								match jh.join() {
 									Ok(mut tr) => {
 										match tr.1 {
 											Err(e) => {
-												valerr!('j', "IO error in thread {}: {}", reg_index_nice(&ri), e);
+												valerr!('j', "IO error in thread {}: {}", ri_nice, e);
 											},
 											Ok(SoftQuit(c)) if c != 0 => {
-												valerr!('j', "Thread {} quit with code {}", reg_index_nice(&ri), c);
+												valerr!('j', "Thread {} quit with code {}", ri_nice, c);
 											},
 											Ok(HardQuit(c)) if c != 0 => {
-												valerr!('j', "Thread {} hard-quit with code {}", reg_index_nice(&ri), c);
+												valerr!('j', "Thread {} hard-quit with code {}", ri_nice, c);
 											},
 											Ok(Killed) => {
-												valerr!('j', "Thread {} was killed", reg_index_nice(&ri));
+												valerr!('j', "Thread {} was killed", ri_nice);
 											},
 											_ => {}
 										}
@@ -1303,7 +1305,7 @@ pub unsafe fn interpreter(
 								}
 							}
 							else {
-								valerr!('j', "Register {} is not running a thread", reg_index_nice(&ri));
+								valerr!('j', "Register {} is not running a thread", ri_nice);
 							}
 						},
 						b'J' => {
