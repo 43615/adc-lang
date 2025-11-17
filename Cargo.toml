@@ -12,7 +12,7 @@ license = "Unlicense"
 no_os = []
 
 [dependencies]
-malachite = { version = "=0.7.0", features = ["32_bit_limbs", "random"] }
+malachite = { version = "=0.7.1", features = ["32_bit_limbs", "random"] }
 bitvec = "=1.0.1"
 getrandom = { version = "=0.3.4", features = ["std"] }
 const_format = "=0.2.35"

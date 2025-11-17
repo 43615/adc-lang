@@ -66,13 +66,13 @@ The "pure" commands that only ever touch the annotated inputs and outputs are ca
 
 Arithmetic functions can be monadic, dyadic, or triadic (take 1, 2, or 3 arguments from the stack) and return one resulting value.
 
-Commands with register access take the next command character as the register number, unless the register pointer is set.
+Commands with register access take the next command character as the register index, unless the register pointer is set.
 
-The term "whitespace character" refers to ` ` (space), the ASCII control characters NUL, HT, LF, VT, FF, CR, and `#` (hash/number sign). Whitespace characters have no function, are never considered to be command characters where those are required, and end non-string literals. `#` starts a line comment, causing all characters until the next LF or the end of the macro to be ignored.
+The term "whitespace character" refers to ` ` (space), the ASCII control characters NUL, HT, LF, VT, FF, CR, and `#` (hash/number sign). Whitespace characters have no function, are not processed as register indices, and end non-string literals. `#` starts a line comment, causing all commands until the next LF or the end of the macro to be ignored.
 
 Some commands have an alternative mode accessed by prefixing `` ` `` (read as "alt", also used for [negative numbers](#number-io)). Additionally, there are some digraph commands that operate on arrays themselves (`a` prefix) or the main stack (`f` prefix).
 
-There are some advanced commands represented by words instead of the usual single characters, starting with `_` (underscore) and running until the next whitespace character.
+There are some advanced/infrequent commands represented by words instead of the usual single characters, starting with `_` (underscore) and running until the next whitespace character.
 
 
 # Input and output
@@ -92,7 +92,7 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 
 This ADC interpreter uses the highly performant [Malachite](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base >=2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
 
-Some of the available mathematical functions are irrational-valued, which necessitates usage of floating-point arithmetic to achieve practical performance on real computers. This places hard limits on the range and precision of the arguments and results of these functions. As mentioned [above](#type-annotations-and-restricted-types), such numbers are annotated as `NF`. This interpreter uses 64-bit ("double precision") numbers as defined by IEEE 754-2008 "binary64", which are natively supported by all CPUs worth using (citation needed).
+Some of the available arithmetic functions are irrational-valued, which necessitates usage of floating-point arithmetic to achieve practical performance on real computers. This places hard limits on the range and precision of the arguments and results of these functions. As mentioned [above](#type-annotations-and-restricted-types), such numbers are annotated as `NF`. This interpreter uses 64-bit ("double precision") numbers as defined by IEEE 754-2008 "binary64", which are natively supported by all CPUs worth using (citation needed).
 
 Some functions also have "integer" variants that aren't bound by these limits, but place further restrictions on the arguments. They are automatically selected instead of the floating-point variant whenever possible, as such results are always preferable.
 
@@ -173,7 +173,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `alpha`: Second Feigenbaum constant (α)
   - `epsilon`: [Machine epsilon](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats.
   - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
-- `NNa N → NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance. Still available in [restricted mode](#os-commands), as meaningful attacks are impossible.
+- `NNa N → NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
 - `NFa NZb t → NFz`: Monadic trigonometric/hyperbolic functions of *a* (angles in radians), selected by *b*:
   - `1`: sine
@@ -201,7 +201,7 @@ Operations on booleans are overloaded variants of arithmetic functions:
 - `Ba Bb ^ → NZz` finds the first occurrence of *b* in *a* and returns its position, `` `1 `` if not found.
 - `Ba v → Bz` reverses *a*.
 - `Ba g → NPz`: length of *a*.
-- `Ba Bb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (z = length + 1).
+- `Ba Bb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (*z* = length + 1).
 - `Ba NPb % → BBz`: *b*th bit of *a*.
 - `Ba NPb ~ → (By Bz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
 - `Xa Yb BBc | → Zz` selects *a* if *c* = `T`, or *b* if *c* = `F`.
@@ -240,7 +240,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa v → Sz` reverses *a*.
 - `Sa g → NPz`: length of *a*.
   - `` Sa `g → NPz ``: byte length of *a*.
-- `Sa Sb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (z = length + 1).
+- `Sa Sb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (*z* = length + 1).
   - `` Sa Sb `G → NPz `` counts the matches of regex *b* in *a*.
 - `Sa NPb % → SCz`: *b*th character of *a*.
 - `Sa NPb ~ → (Sy Sz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
@@ -339,7 +339,8 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 # Other commands
 
 - `Xa z → NNz` converts a value into its type discriminant: Boolean is `1`, number is `2`, string is `3`.
-- `NNa w` waits for *a* nanoseconds. The actual time may be different depending on platform/scheduling details.
+- `NNa w` waits for *a* nanoseconds. Actual time may be different depending on platform/scheduling details.
+- `W → NZz`: current system time in nanoseconds from the Unix epoch (1970-01-01 00:00:00 UTC). Full precision and monotonicity not guaranteed.
 - `q` quits the ADC interpreter. If the [register pointer](#registers) is set, the lowest byte of its integer part is returned as the exit code.
   - `` `q `` is a "hard" quit, which may be handled differently.
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.

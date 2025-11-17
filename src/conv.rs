@@ -39,19 +39,17 @@ pub(crate) fn f_r(fa: f64) -> Result<Rational, FnErr> {
 	}
 }
 
+
+/// shortlex comparison of strings
 pub(crate) fn str_cmp(a: &str, b: &str) -> Ordering {
 	let (mut a, mut b) = (a.chars(), b.chars());
+	let mut o = Ordering::Equal;
 	loop {
 		match (a.next(), b.next()) {
-			(Some(ca), Some(cb)) => {
-				match ca.cmp(&cb) {
-					Ordering::Equal => continue,
-					ord => return ord
-				}
-			},
-			(Some(_), None) => return Ordering::Greater,
-			(None, Some(_)) => return Ordering::Less,
-			(None, None) => return Ordering::Equal
+			(Some(ca), Some(cb)) => { o = o.then(ca.cmp(&cb)); },	//find first difference
+			(Some(_), None) => return Ordering::Greater,	//a is longer
+			(None, Some(_)) => return Ordering::Less,		//b is longer
+			(None, None) => return o						//same length, return first difference
 		}
 	}
 }

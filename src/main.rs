@@ -57,7 +57,7 @@ fn main() -> ExitCode {
 	}
 
 	fn runtime_error(s: String) -> ExitCode {
-		eprintln!("!? {s}");
+		eprintln!("?? {s}");
 		2.into()
 	}
 

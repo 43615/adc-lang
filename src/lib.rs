@@ -17,6 +17,7 @@ pub(crate) mod num;
 mod os;
 
 use std::io::{Write, BufRead, ErrorKind};
+use std::ops::Neg;
 use std::panic::catch_unwind;
 use std::ptr::NonNull;
 use std::str::FromStr;
@@ -194,7 +195,7 @@ const CMDS: [Command; 256] = {
 		Lit,		Wrong,		Wrong,		Cmd(cln),	Exec,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	ExecR,		Cmd(gk),	ExecR,		Cmd(gm),	Exec,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
-		Exec,		Exec,		Exec,		ExecR,		Lit,		Wrong,		Fn2(root),	Wrong,		ExecR,		Wrong,		ExecR,		Lit,		Wrong,		Wrong,		Fn2(pow),	Exec,
+		Exec,		Exec,		Exec,		ExecR,		Lit,		Wrong,		Fn2(root),	Exec,		ExecR,		Wrong,		ExecR,		Lit,		Wrong,		Wrong,		Fn2(pow),	Exec,
 
 		//`			a			b			c			d			e			f			g			h			i			j			k			l			m			n			o
 		Exec,		Exec,		Wrong,		Cmd(cls),	Exec,		Wrong,		Exec,		Fn1(log),	Wrong,		Cmd(si),	ExecR,		Cmd(sk),	ExecR,		Cmd(sm),	Fn1(fac),	Cmd(so),
@@ -315,14 +316,14 @@ pub unsafe fn interpreter(
 	io: Arc<Mutex<IOStreams>>,
 	mut ll: LogLevel,
 	kill: Option<&Receiver<()>>,
-	#[cfg_attr(feature = "no_os", allow(unused_variables))]
+	#[cfg_attr(feature = "no_os", expect(unused_variables))]
 	mut restrict: bool
 ) -> std::io::Result<ExecResult>
 {
 	use ExecResult::*;
 
 	let th_name = if kill.is_some() {	//if running in a child thread
-		#[cfg_attr(feature = "no_os", allow(unused_assignments))] { restrict = true; }	//extra safety just in case
+		#[cfg_attr(feature = "no_os", expect(unused_assignments))] { restrict = true; }	//extra safety just in case
 		std::thread::current().name().unwrap().to_owned()
 	}
 	else {
@@ -1045,6 +1046,18 @@ pub unsafe fn interpreter(
 								synerr!('w', "Expected 1 argument, 0 given");
 							}
 						},
+						b'W' => {
+							push!(Value::N(
+								match std::time::SystemTime::UNIX_EPOCH.elapsed() {
+									Ok(dur) => {
+										Rational::from(dur.as_nanos())
+									},
+									Err(e) => {
+										Rational::from(e.duration().as_nanos()).neg()
+									}
+								}
+							));
+						},
 						b'_' => {	//word commands
 							let mut word = Vec::new();
 							while let Some(b) = mac.next() {
@@ -1059,7 +1072,7 @@ pub unsafe fn interpreter(
 
 							match &word[..] {	//word commands:
 								b"restrict" => {
-									#[cfg_attr(feature = "no_os", allow(unused_assignments))] { restrict = true; }
+									#[cfg_attr(feature = "no_os", expect(unused_assignments))] { restrict = true; }
 								},
 								b"quiet" => {
 									ll = LogLevel::Quiet;
@@ -1283,7 +1296,9 @@ pub unsafe fn interpreter(
 									Ok(mut tr) => {
 										match tr.1 {
 											Err(e) => {
-												valerr!('j', "IO error in thread {}: {}", ri_nice, e);
+												let s = format!("IO error in thread {}: {}", ri_nice, e);
+												eprintln!("? {th_name}j: {}", s);	//io.2 might be unusable, fall back to fresh stderr
+												elatch = Some((Natural::ZERO, 'j', s));
 											},
 											Ok(SoftQuit(c)) if c != 0 => {
 												valerr!('j', "Thread {} quit with code {}", ri_nice, c);

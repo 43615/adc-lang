@@ -618,16 +618,12 @@ dya!(gt
 
 mon!(fac
 	N(ra), _ => {	//factorial
-		if let Ok(na) = Natural::try_from(ra) {
-			if let Ok(ua) = u64::try_from(&na) {
-				Ok(N(Natural::factorial(ua).into()))
-			}
-			else {
-				Err(Arith(format!("Factorial of {na} is unrepresentable",)))
-			}
+		let na = r_n(ra)?;
+		if let Ok(ua) = u64::try_from(&na) {
+			Ok(N(Natural::factorial(ua).into()))
 		}
 		else {
-			Err(Arith("Non-natural given".into()))
+			Err(Arith(format!("Factorial of {na} is unrepresentable")))
 		}
 	},
 
