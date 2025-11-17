@@ -38,17 +38,6 @@ use crate::errors::TypeLabel;
 pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
 
 struct LineEditor(Interface<DefaultTerminal>);
-impl Default for LineEditor {
-	fn default() -> Self {
-		use linefeed::Signal::*;
-		let iface = Interface::new("").unwrap();
-		//these do not take &mut self, shrug
-		iface.set_report_signal(Break, true);
-		iface.set_report_signal(Interrupt, true);
-		iface.set_report_signal(Quit, true);
-		Self(iface)
-	}
-}
 
 /// Generic input stream adapter trait, used for adding a proper line editor.
 ///
@@ -100,6 +89,22 @@ impl ReadLine for LineEditor {
 	}
 }
 
+fn input_stream() -> Box<dyn ReadLine + Send> {
+	use linefeed::Signal::*;
+	match Interface::new("") {
+		Ok(iface) => {
+			//these do not take &mut self, shrug
+			iface.set_report_signal(Break, true);
+			iface.set_report_signal(Interrupt, true);
+			iface.set_report_signal(Quit, true);
+			Box::new(LineEditor(iface))
+		},
+		Err(_) => {	//fall back to plain stdin
+			Box::new(std::io::BufReader::new(std::io::stdin()))
+		}
+	}
+}
+
 /// Bundle of standard IO streams, generic interface to support custom IO wrappers
 pub struct IOStreams (
 	/// Input
@@ -122,7 +127,7 @@ impl IOStreams {
 	/// Use IO streams of the process (stdin, stdout, stderr), with extra [line editor](linefeed) on stdin
 	pub fn process() -> Self {
 		Self (
-			Box::new(LineEditor::default()),
+			input_stream(),
 			Box::new(std::io::stdout()),
 			Box::new(std::io::stderr())
 		)
