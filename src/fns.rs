@@ -14,11 +14,11 @@ use crate::conv::*;
 use crate::RE_CACHE;
 
 /// Monadic function definition
-pub(crate) type Mon = fn(&Value, bool) -> Result<Value, FnErr>;
+pub type Mon = fn(&Value, bool) -> Result<Value, FnErr>;
 /// Monadic template with standard type matching
 macro_rules! mon {
     ($name:ident $($pa:pat, $m:pat => $op:expr),*) => {
-		pub(crate) fn $name(a: &Value, m: bool) -> Result<Value, FnErr> {
+		pub fn $name(a: &Value, m: bool) -> Result<Value, FnErr> {
 			match (a, m) {
 				$(($pa, $m) => $op,)*
 				_ => Err(Type1(a.into()))
@@ -28,11 +28,11 @@ macro_rules! mon {
 }
 
 /// Dyadic function definition
-pub(crate) type Dya = fn(&Value, &Value, bool) -> Result<Value, FnErr>;
+pub type Dya = fn(&Value, &Value, bool) -> Result<Value, FnErr>;
 /// Dyadic template with standard type matching
 macro_rules! dya {
     ($name:ident $($pa:pat, $pb:pat, $m:pat => $op:expr),*) => {
-		pub(crate) fn $name(a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
+		pub fn $name(a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
 			match (a, b, m) {
 				$(($pa, $pb, $m) => $op,)*
 				_ => Err(Type2(a.into(), b.into()))
@@ -42,11 +42,11 @@ macro_rules! dya {
 }
 
 /// Triadic function definition
-pub(crate) type Tri = fn(&Value, &Value, &Value, bool) -> Result<Value, FnErr>;
+pub type Tri = fn(&Value, &Value, &Value, bool) -> Result<Value, FnErr>;
 /// Triadic template with standard type matching
 macro_rules! tri {
     ($name:ident $($pa:pat, $pb:pat, $pc:pat, $m:pat => $op:expr),*) => {
-		pub(crate) fn $name(a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, FnErr> {
+		pub fn $name(a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, FnErr> {
 			match (a, b, c, m) {
 				$(($pa, $pb, $pc, $m) => $op,)*
 				_ => Err(Type3(a.into(), b.into(), c.into()))
@@ -56,7 +56,7 @@ macro_rules! tri {
 }
 
 /// execute monadic fn, pseudorecursion through nested arrays
-pub(crate) fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
+pub fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 	if let A(aa) = a { unsafe {	//iterate through array, bfs without recursion
 		//NonNull pointers are required because of aliasing rules, soundness is ensured manually
 		let mut az: Vec<Value> = Vec::new();	//resulting array
@@ -82,7 +82,7 @@ pub(crate) fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 }
 
 /// execute dyadic fn, pseudorecursion through nested arrays
-pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
+pub fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
 	match (a, b) {
 		(A(_), A(_)) | (A(_), _) | (_, A(_)) => { unsafe {	//iterate through array(s), bfs without recursion
 			//NonNull pointers are required because of aliasing rules, soundness is ensured manually
@@ -112,7 +112,7 @@ pub(crate) fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnEr
 }
 
 /// execute triadic fn, pseudorecursion through nested arrays
-pub(crate) fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, FnErr> {
+pub fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, FnErr> {
 	match (a, b, c) {
 		(A(_), A(_), A(_)) |
 		(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
@@ -550,7 +550,7 @@ dya!(eq
 			Ok(B(bz))
 		}
 		else {
-			Ok(B(bitvec![0]))
+			Ok(B(bitvec![u8, Lsb0; 0]))
 		}
 	},
 	N(ra), N(rb), _ => {
@@ -564,7 +564,7 @@ dya!(eq
 		Ok(B(bz))
 	},
 	_, _, true => {	//total: false if types differ
-		Ok(B(bitvec![0]))
+		Ok(B(bitvec![u8, Lsb0; 0]))
 	}
 );
 
@@ -588,7 +588,7 @@ dya!(lt
 		Ok(B(bz))
 	},
 	_, _, true => {	//total: false if types differ
-		Ok(B(bitvec![0]))
+		Ok(B(bitvec![u8, Lsb0; 0]))
 	}
 );
 
@@ -612,7 +612,7 @@ dya!(gt
 		Ok(B(bz))
 	},
 	_, _, true => {	//total: false if types differ
-		Ok(B(bitvec![0]))
+		Ok(B(bitvec![u8, Lsb0; 0]))
 	}
 );
 

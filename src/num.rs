@@ -8,7 +8,7 @@ use malachite::base::num::conversion::traits::{Digits, WrappingFrom};
 use malachite::rational::arithmetic::traits::Approximate;
 
 ///negative, integer, fractional, recurring
-pub(crate) fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
+pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
 	let sign = r.sign() == Less;
 	let (mut ipart, temp) = r.to_digits(o);
 	ipart.reverse();	//malachite puts them in reverse order
@@ -113,7 +113,7 @@ fn chr(d: &Natural) -> u8 {
 }
 
 ///normal notation from digits
-pub(crate) fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], o: &Natural) -> String {
+pub fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], o: &Natural) -> String {
 	let mut res = Vec::new();
 	if *o > Natural::const_from(36) {	//enclosed any-base format
 		res.push(b'\'');	//prefix for any-base
@@ -196,7 +196,7 @@ pub(crate) fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Na
 }
 
 ///scientific notation from digits
-pub(crate) fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], o: &Natural) -> String {
+pub fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], o: &Natural) -> String {
 	if ipart.is_empty() {	//negative exponent
 		if let Some(pos) = fpart.iter().position(|n| *n != Natural::ZERO) {    //find first nonzero fractional digit
 			let (inew, fnew) = fpart.split_at(pos).1.split_at(1);
@@ -243,7 +243,7 @@ pub(crate) fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Nat
 }
 
 ///fractional notation from original
-pub(crate) fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
+pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 	let (mut numer, mut denom) = r.to_numerator_and_denominator();
 
 	if k != 0 {
@@ -255,11 +255,12 @@ pub(crate) fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 			(numer, denom) = r.approximate(&max).to_numerator_and_denominator();
 		}
 	}
-
+	
 	let mut res = Vec::new();
-
+	
 	let mut sign = r.sign() == Less;
-
+	
+	#[allow(clippy::tuple_array_conversions)]
 	for n in [numer, denom] {
 		if *o > Natural::const_from(10) {
 			res.push(b'\'');	//high base prefix
@@ -297,7 +298,7 @@ pub(crate) fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 }
 
 ///shortest of nnorm, nsci, nfrac (in this order)
-pub(crate) fn nauto(r: &Rational, k: usize, o: &Natural) -> String {
+pub fn nauto(r: &Rational, k: usize, o: &Natural) -> String {
 	let (neg, ipart, fpart, rpart) = digits(r, k, o);
 	let norm = nnorm(neg, &ipart, &fpart, &rpart, o);
 	let sci = nsci(neg, &ipart, &fpart, &rpart, o);

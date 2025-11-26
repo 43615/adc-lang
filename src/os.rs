@@ -11,18 +11,18 @@ use crate::errors::TypeLabel;
 use crate::structs::{Value, State};
 
 /// OS command
-pub(crate) type OsCmd = unsafe fn(&mut State) -> Result<Vec<Value>, String>;
+pub type OsCmd = unsafe fn(&mut State) -> Result<Vec<Value>, String>;
 /// Function template for OS command
 macro_rules! oscmd {
     ($name:ident, $st:ident $block:block) => {
-		pub(crate) unsafe fn $name($st: &mut State) -> Result<Vec<Value>, String> {
+		pub unsafe fn $name($st: &mut State) -> Result<Vec<Value>, String> {
 			$block
 		}
 	}
 }
 
 
-pub(crate) const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
+pub const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
 	//static env queries
 	b"osarch" => osarch,
 	b"osfamily" => osfamily,
@@ -30,9 +30,12 @@ pub(crate) const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
 	b"pid" => pid,
 
 	//file operations
-	b"read" => read,
-	b"append" => append,
-	b"write" => write,
+	b"read" => read::<false>,
+	b"append" => append::<false>,
+	b"write" => write::<false>,
+	b"readb" => read::<true>,
+	b"appendb" => append::<true>,
+	b"writeb" => write::<true>,
 	b"load" => load,
 	b"save" => save,
 
@@ -85,7 +88,7 @@ fn try_writing_fd(name: &str) -> Result<File, String> {
 	OpenOptions::new().write(true).create(true).truncate(true).open(name).map_err(|e| format!("Can't open file '{name}' for writing: {e}"))
 }
 
-oscmd!(read, st {
+pub unsafe fn read<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::S(name) = &*va {
 			let mut v = Vec::new();
@@ -93,7 +96,16 @@ oscmd!(read, st {
 				Ok(mut fd) => {
 					match fd.read_to_end(&mut v) {
 						Ok(_) => {
-							Ok(vec![Value::S(String::from_utf8_lossy(&v).into())])
+							if B {
+								Ok(vec![Value::A(
+									v.into_iter().map(|b| Value::B(BitVec::from_element(b))).collect()
+								)])
+							}
+							else {
+								Ok(vec![Value::S(
+									String::from_utf8_lossy(&v).into())
+								])
+							}
 						},
 						Err(e) => {
 							let name = name.to_owned();
@@ -117,13 +129,55 @@ oscmd!(read, st {
 	else {
 		Err("Expected 1 argument, 0 given!".into())
 	}
-});
+}
 
-oscmd!(append, st {
+pub unsafe fn append<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::S(s), Value::S(name)) => {
+				(Value::A(a), Value::S(name)) if B => {
+					match try_appending_fd(name) {
+						Ok(mut fd) => {
+							let mut bytes: Vec<u8> = Vec::new();
+							for v in a {
+								match v {
+									Value::B(b) if b.len()==8 => {
+										bytes.push(b.as_raw_slice()[0]);
+									},
+									Value::B(b) => {
+										let l = b.len();
+										st.mstk.push(va);
+										st.mstk.push(vb);
+										return Err(format!("Expected byte array, found boolean of length {} in array!", l));
+									},
+									_ => {
+										let t = TypeLabel::from(v);
+										st.mstk.push(va);
+										st.mstk.push(vb);
+										return Err(format!("Expected byte array, found {} in array!", t));
+									}
+								}
+							}
+							match fd.write_all(&bytes) {
+								Ok(()) => {
+									Ok(vec![])
+								},
+								Err(e) => {
+									let name = name.to_owned();
+									st.mstk.push(va);
+									st.mstk.push(vb);
+									Err(format!("Can't append to file '{name}': {e}"))
+								}
+							}
+						},
+						Err(es) => {
+							st.mstk.push(va);
+							st.mstk.push(vb);
+							Err(es)
+						}
+					}
+				},
+				(Value::S(s), Value::S(name)) if !B => {
 					match try_appending_fd(name) {
 						Ok(mut fd) => {
 							match fd.write_all(s.as_bytes()) {
@@ -150,7 +204,14 @@ oscmd!(append, st {
 					let tb = TypeLabel::from(&*vb);
 					st.mstk.push(va);
 					st.mstk.push(vb);
-					Err(format!("Expected two strings, {} and {} given!", ta, tb))
+					Err(
+						if B {
+							format!("Expected array and string, {} and {} given!", ta, tb)
+						}
+						else {
+							format!("Expected two strings, {} and {} given!", ta, tb)
+						}
+					)
 				}
 			}
 		}
@@ -162,13 +223,55 @@ oscmd!(append, st {
 	else {
 		Err("Expected 2 arguments, 0 given!".into())
 	}
-});
+}
 
-oscmd!(write, st {
+pub unsafe fn write<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::S(s), Value::S(name)) => {
+				(Value::A(a), Value::S(name)) if B => {
+					match try_writing_fd(name) {
+						Ok(mut fd) => {
+							let mut bytes: Vec<u8> = Vec::new();
+							for v in a {
+								match v {
+									Value::B(b) if b.len()==8 => {
+										bytes.push(b.as_raw_slice()[0]);
+									},
+									Value::B(b) => {
+										let l = b.len();
+										st.mstk.push(va);
+										st.mstk.push(vb);
+										return Err(format!("Expected byte array, found boolean of length {} in array!", l));
+									},
+									_ => {
+										let t = TypeLabel::from(v);
+										st.mstk.push(va);
+										st.mstk.push(vb);
+										return Err(format!("Expected byte array, found {} in array!", t));
+									}
+								}
+							}
+							match fd.write_all(&bytes) {
+								Ok(()) => {
+									Ok(vec![])
+								},
+								Err(e) => {
+									let name = name.to_owned();
+									st.mstk.push(va);
+									st.mstk.push(vb);
+									Err(format!("Can't write to file '{name}': {e}"))
+								}
+							}
+						},
+						Err(es) => {
+							st.mstk.push(va);
+							st.mstk.push(vb);
+							Err(es)
+						}
+					}
+				},
+				(Value::S(s), Value::S(name)) if !B => {
 					match try_writing_fd(name) {
 						Ok(mut fd) => {
 							match fd.write_all(s.as_bytes()) {
@@ -193,7 +296,14 @@ oscmd!(write, st {
 					let tb = TypeLabel::from(&*vb);
 					st.mstk.push(va);
 					st.mstk.push(vb);
-					Err(format!("Expected two strings, {} and {} given!", ta, tb))
+					Err(
+						if B {
+							format!("Expected array and string, {} and {} given!", ta, tb)
+						}
+						else {
+							format!("Expected two strings, {} and {} given!", ta, tb)
+						}
+					)
 				}
 			}
 		}
@@ -205,7 +315,7 @@ oscmd!(write, st {
 	else {
 		Err("Expected 2 arguments, 0 given!".into())
 	}
-});
+}
 
 oscmd!(load, st {
 	if let Some(va) = st.mstk.pop() {
@@ -577,10 +687,10 @@ oscmd!(exited, st {
 				if let Some(child) = unsafe { #[expect(static_mut_refs)] PIDS.get_mut(&pid) } {
 					match child.try_wait() {
 						Ok(Some(_)) => {
-							Ok(vec![Value::B(bitvec![1])])
+							Ok(vec![Value::B(bitvec![u8, Lsb0; 1])])
 						},
 						Ok(None) => {
-							Ok(vec![Value::B(bitvec![0])])
+							Ok(vec![Value::B(bitvec![u8, Lsb0; 0])])
 						},
 						Err(e) => {
 							st.mstk.push(va);

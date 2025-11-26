@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use crate::structs::Value;
 
 #[derive(Debug)]
-pub(crate) enum FnErr {
+pub enum FnErr {
 	Type1(TypeLabel),
 	Type2(TypeLabel, TypeLabel),
 	Type3(TypeLabel, TypeLabel, TypeLabel),
@@ -29,7 +29,7 @@ impl Display for FnErr {
 impl std::error::Error for FnErr {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)] pub(crate) enum TypeLabel {
+#[repr(u8)] pub enum TypeLabel {
 	B, N, S, A
 }
 impl From<&Value> for TypeLabel {

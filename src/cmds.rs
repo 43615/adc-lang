@@ -8,11 +8,11 @@ use crate::errors::TypeLabel;
 use crate::structs::{Value, State};
 
 /// Impure command
-pub(crate) type Cmd = fn(&mut State) -> Result<Vec<Value>, String>;
+pub type Cmd = fn(&mut State) -> Result<Vec<Value>, String>;
 /// Function template for impure command
 macro_rules! cmd {
     ($name:ident, $st:ident $block:block) => {
-		pub(crate) fn $name($st: &mut State) -> Result<Vec<Value>, String> {
+		pub fn $name($st: &mut State) -> Result<Vec<Value>, String> {
 			$block
 		}
 	}

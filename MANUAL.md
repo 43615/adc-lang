@@ -353,7 +353,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 
 This is a suite of commands that interact with the OS running the interpreter. To protect against untrusted input, these may be disabled with "restricted mode" (**CLI:** `-r` flag), the `_restrict` command (one-way), or by building the crate with the `no_os` feature enabled.
 
-Most strings involved here are not guaranteed to be valid UTF-8. When saving outputs as ADC values, they are converted in an infallible but "lossy" manner where invalid sequences are replaced with `U+FFFD REPLACEMENT CHARACTER` (�).
+Most strings involved here are not guaranteed to be valid UTF-8, particularly on Windows systems. When saving outputs as ADC values, they are converted in an infallible but "lossy" manner where invalid sequences are replaced with `U+FFFD REPLACEMENT CHARACTER` (�).
 
 
 ## Environment access
@@ -377,6 +377,7 @@ Most strings involved here are not guaranteed to be valid UTF-8. When saving out
 - `Sa Sb _write` writes *a* to file *b*, creating/overwriting it if necessary.
 - `Sa Sb _append` appends *a* to the end of file *b*, creating it if necessary.
 - `Sa _read → Sz` reads file *a* into a string, erroring if it doesn't exist.
+- `_writeb`, `_appendb`, and `_readb` operate on the file contents as arrays of bytes, stored as booleans of length 8.
 
 
 ## Process execution

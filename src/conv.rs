@@ -8,19 +8,19 @@ use malachite::base::rounding_modes::RoundingMode;
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value;
 
-pub(crate) fn r_u(ra: &Rational) -> Result<usize, FnErr> {
+pub fn r_u(ra: &Rational) -> Result<usize, FnErr> {
 	usize::try_from(ra).map_err(|_| Arith("Non-index given".into()))
 }
 
-pub(crate) fn r_n(ra: &Rational) -> Result<Natural, FnErr> {
+pub fn r_n(ra: &Rational) -> Result<Natural, FnErr> {
 	Natural::try_from(ra).map_err(|_| Arith("Non-natural given".into()))
 }
 
-pub(crate) fn r_i(ra: &Rational) -> Result<Integer, FnErr> {
+pub fn r_i(ra: &Rational) -> Result<Integer, FnErr> {
 	Integer::try_from(ra).map_err(|_| Arith("Non-integer given".into()))
 }
 
-pub(crate) fn r_f(ra: &Rational) -> Result<f64, FnErr> {
+pub fn r_f(ra: &Rational) -> Result<f64, FnErr> {
 	use malachite::rational::conversion::primitive_float_from_rational::FloatConversionError;
 	match f64::try_from(ra) {
 		Ok(f) => {Ok(f)},
@@ -30,7 +30,7 @@ pub(crate) fn r_f(ra: &Rational) -> Result<f64, FnErr> {
 	}
 }
 
-pub(crate) fn f_r(fa: f64) -> Result<Rational, FnErr> {
+pub fn f_r(fa: f64) -> Result<Rational, FnErr> {
 	if fa.is_nan() {Err(Arith("Floating-point result is NaN".into()))}
 	else if fa == f64::INFINITY {Err(Arith("Floating-point result is +∞".into()))}
 	else if fa == f64::NEG_INFINITY {Err(Arith("Floating-point result is -∞".into()))}
@@ -41,7 +41,7 @@ pub(crate) fn f_r(fa: f64) -> Result<Rational, FnErr> {
 
 
 /// shortlex comparison of strings
-pub(crate) fn str_cmp(a: &str, b: &str) -> Ordering {
+pub fn str_cmp(a: &str, b: &str) -> Ordering {
 	let (mut a, mut b) = (a.chars(), b.chars());
 	let mut o = Ordering::Equal;
 	loop {
@@ -55,7 +55,7 @@ pub(crate) fn str_cmp(a: &str, b: &str) -> Ordering {
 }
 
 /// Iterates through an array or promotes a plain value by repeating it endlessly. Needed for rank-polymorphy.
-pub(crate) enum PromotingIter<'a> {
+pub enum PromotingIter<'a> {
 	Arr(&'a [Value], usize),
 	Val(&'a Value)
 }
@@ -83,13 +83,13 @@ impl<'a> Iterator for PromotingIter<'a> {
 impl std::iter::FusedIterator for PromotingIter<'_> {}
 
 /// If both values are arrays, check if they have the same length
-pub(crate) fn lenck2(a: &Value, b: &Value) -> Result<(), FnErr> {
+pub const fn lenck2(a: &Value, b: &Value) -> Result<(), FnErr> {
 	use Value::*;
 	if let (A(aa), A(ab)) = (a, b) { if aa.len() == ab.len() { Ok(()) } else { Err(Len2(aa.len(), ab.len())) } } else { Ok(()) }
 }
 
 /// If two or more values are arrays, check if they have the same length
-pub(crate) fn lenck3(a: &Value, b: &Value, c: &Value) -> Result<(), FnErr> {
+pub const fn lenck3(a: &Value, b: &Value, c: &Value) -> Result<(), FnErr> {
 	use Value::*;
 	match (a, b, c) {
 		(A(aa), A(ab), A(ac)) => if aa.len() == ab.len() && ab.len() == ac.len() { Ok(()) } else { Err(Len3(aa.len(), ab.len(), ac.len())) },

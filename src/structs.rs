@@ -11,7 +11,7 @@ use regex::{Regex, RegexBuilder};
 
 #[derive(Debug)]
 pub enum Value {
-	B(BitVec<usize, Lsb0>),
+	B(BitVec<u8, Lsb0>),
 	N(Rational),
 	S(String),
 	A(Vec<Value>)
@@ -167,12 +167,62 @@ pub struct Register {
 	/// Thread handle with result values, kill signal, join signal. Sending or dropping the join signal is required before joining.
 	pub th: Option<(JoinHandle<ThreadResult>, Sender<()>, Sender<()>)>
 }
+impl Register {
+	/// Joins the thread handle, `kill = true` first sends a kill signal.
+	///
+	/// Returns a message from any unhappy termination, same as the `j` command.
+	pub fn end_thread(&mut self, kill: bool) -> Option<String> {
+		use crate::ExecResult::*;
+
+		let mut res = None;
+
+		if let Some((jh, ktx, jtx)) = self.th.take() {
+			if kill {
+				ktx.send(()).unwrap_or_else(|_| panic!("Thread panicked, terminating!"));
+			}
+			jtx.send(()).unwrap_or_else(|_| panic!("Thread panicked, terminating!"));
+			match jh.join() {
+				Ok(mut tr) => {
+					match tr.1 {
+						Err(e) => {
+							res = Some(format!("IO error in thread: {}", e));
+						},
+						Ok(SoftQuit(c)) if c != 0 => {
+							res = Some(format!("Thread quit with code {}", c));
+						},
+						Ok(HardQuit(c)) if c != 0 => {
+							res = Some(format!("Thread hard-quit with code {}", c));
+						},
+						Ok(Killed) => {
+							res = Some("Thread was killed".into());
+						},
+						_ => {}	//finished or quit with 0
+					}
+
+					self.v.append(&mut tr.0);
+				},
+				Err(e) => {
+					std::panic::resume_unwind(e);
+				}
+			}
+		}
+		res
+	}
+}
 /// Clone without thread handles since those are unique
 impl Clone for Register {
 	fn clone(&self) -> Self {
 		Self {
 			v: self.v.clone(),
 			th: None
+		}
+	}
+}
+/// Runs `self.end_thread(true)`, prints error message to stderr.
+impl Drop for Register {
+	fn drop(&mut self) {
+		if let Some(s) = self.end_thread(true) {
+			eprintln!("{s}");
 		}
 	}
 }
@@ -224,7 +274,7 @@ impl RegStore {
 		});
 	}
 
-	/// Clear all values, don't touch thread handles in `self`
+	/// Clear all values, don't touch thread handles
 	pub fn clear_vals(&mut self) {
 		for reg in &mut self.low {
 			reg.v = Vec::new();
@@ -236,22 +286,25 @@ impl RegStore {
 		self.high.shrink_to_fit();
 	}
 
-	/// Replace values with those from `other`, keep thread handles in `self` and discard any in `other`
+	/// Replace values with those from `other`, conflicting thread handles in `other` will be killed
 	pub fn replace_vals(&mut self, mut other: Self) {
-		for (reg, oreg) in self.low.iter_mut().zip(other.low.into_iter()) {
-			reg.v = oreg.v;
+		for (reg, oreg) in self.low.iter_mut().zip(other.low.iter_mut()) {
+			std::mem::swap(&mut reg.v, &mut oreg.v);	//swap to reuse allocations, other will be dropped anyway
 		}
-		self.high.retain(|ri, reg| {	//retain existing regs if:
-			if let Some(oreg) = other.high.remove(ri) && !oreg.v.is_empty() {	//other has one with the same index
-				reg.v = oreg.v;
-				true
+		self.high.retain(|ri, reg| {
+			if let Some(mut oreg) = other.high.remove(ri) {	//if other has the same reg, overwrite self with its values
+				std::mem::swap(&mut reg.v, &mut oreg.v);
+				if reg.th.is_none() {
+					reg.th = oreg.th.take();
+				}
+				!reg.v.is_empty() || reg.th.is_some()
 			}
-			else {	//or a thread handle
+			else {	//erase values in self, but keep thread handles
 				reg.v = Vec::new();
 				reg.th.is_some()
 			}
 		});
-		for (ori, oreg) in other.high.drain().filter_map(|(ori, oreg)| (!oreg.v.is_empty()).then_some((ori, Register {v: oreg.v, th: None}))) {
+		for (ori, oreg) in other.high.drain().filter(|(_, oreg)| !oreg.v.is_empty()) {	//add remaining regs from other
 			self.high.insert(ori, oreg);
 		}
 	}
@@ -288,7 +341,7 @@ impl RegStore {
 							Ok(Killed) => {
 								res.push(format!("Thread {} was killed", ri_nice));
 							},
-							_ => {}
+							_ => {}	//finished or quit with 0
 						}
 						
 						reg.v.append(&mut tr.0);
@@ -310,13 +363,21 @@ impl Default for RegStore {
 		}
 	}
 }
+/// Runs `self.end_threads(true)`, prints error messages to stderr.
+impl Drop for RegStore {
+	fn drop(&mut self) {
+		for s in self.end_threads(true) {
+			eprintln!("{s}");
+		}
+	}
+}
 
-/// globally shareable cache for compiled regex automata
+/// Global cache for compiled regex automata
 #[derive(Default, Debug)]
 #[repr(transparent)] pub(crate) struct RegexCache(pub(crate) RwLock<HashMap<String, Regex>>);
 
 impl RegexCache {
-	/// get regex from cache or freshly compile
+	/// Get regex from cache or freshly compile
 	pub(crate) fn get(&self, s: &String) -> Result<Regex, String> {
 		if let Some(re) = self.0.read().unwrap().get(s) {
 			Ok(re.clone())
@@ -330,7 +391,7 @@ impl RegexCache {
 					self.0.write().unwrap().insert(s.clone(), re.clone());
 					Ok(re)
 				},
-				Err(e) => Err(format!("can't compile regex: {e}"))
+				Err(e) => Err(format!("Can't compile regex: {e}"))
 			}
 		}
 	}
@@ -539,7 +600,7 @@ impl Utf8Iter<'_> {
 		}
 	}
 
-	/// Converts 1 or 2 [`Value`]s into a stack of macros.
+	/// Converts 1 or 2 [`Value`]s into a list of macros.
 	///
 	/// Nested array traversal using heap DFS with flattening. Value types should match the syntax in the ADC manual:
 	/// - If only `top` is given, it must be a string.
@@ -547,18 +608,18 @@ impl Utf8Iter<'_> {
 	/// - Otherwise, `sec` must be a string, and the number/boolean in `top` decides how often to run `sec`.
 	/// - For arrays, the nesting layout and lengths must match exactly and the contained scalars must all be either strings or non-strings as above.
 	///
-	/// `Ok` contains the macros and repetition counts in reverse (call stack) order and a flag indicating whether `sec` should be returned.
-	pub fn from_vals(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
+	/// `Ok` contains the macros and repetition counts (with zero-counts omitted), and a flag indicating whether `sec` should be returned.
+	pub fn try_macros(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
 		use Value::*;
 		use crate::errors::TypeLabel;
 		use crate::conv::{PromotingIter, lenck2};
 		if let Some(sec) = sec {	//dyadic form
-			if let Ok(res) = Self::from_vals(top, None) { return Ok(res); }	//see if monadic form succeeds (only strings in top), continue if not
+			if let Ok(res) = Self::try_macros(top, None) { return Ok(res); }	//see if monadic form succeeds (only strings in top), continue if not
 			match (sec, top) {
 				(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//traverse nested arrays
 					if let Err(e) = lenck2(sec, top) { return Err(e.to_string()); }
 					let mut stk = vec![(PromotingIter::from(sec), PromotingIter::from(top))];
-					let mut res = vec![];
+					let mut res = Vec::new();
 
 					while let Some((ia, ib)) = stk.last_mut() {	//keep operating on the top iters
 						if let (Some(va), Some(vb)) = (ia.next(), ib.next()) {	//advance them
@@ -596,7 +657,6 @@ impl Utf8Iter<'_> {
 						}
 					}
 
-					res.reverse();
 					Ok((res, false))
 				},
 				//scalars:
@@ -649,7 +709,7 @@ impl Utf8Iter<'_> {
 							stk.pop();	//"return"
 						}
 					}
-					res.reverse();
+
 					Ok((res, true))
 				},
 				//scalar:
@@ -671,7 +731,7 @@ impl Utf8Iter<'_> {
 		bytes.len() <= *pos
 	}
 	
-	pub(crate) fn back(&mut self) {
+	pub(crate) const fn back(&mut self) {
 		let pos = match self {
 			Self::Borrowed {pos, ..} => pos,
 			Self::Owned {pos, ..} => pos
@@ -679,7 +739,7 @@ impl Utf8Iter<'_> {
 		*pos -= 1;
 	}
 
-	pub(crate) fn rewind(&mut self) {
+	pub(crate) const fn rewind(&mut self) {
 		let pos = match self {
 			Self::Borrowed {pos, ..} => pos,
 			Self::Owned {pos, ..} => pos
@@ -700,7 +760,7 @@ pub const DEFAULT_PARAMS: Params = {
 	(0, Natural::const_from(10), Natural::const_from(10), NumOutMode::Auto)
 };
 
-/// Stack for numeric IO parameter contexts, with checked accessors
+/// Stack for numeric IO parameter contexts, used implicitly by the ADC interpreter
 #[derive(Clone, Debug)]
 #[repr(transparent)] pub struct ParamStk(Vec<Params>);
 impl ParamStk {
@@ -720,14 +780,17 @@ impl ParamStk {
 		*self = Self::default();
 	}
 
-	/// Refers to the underlying [`Vec`] for manual access
-	pub fn inner(&self) -> &Vec<Params> {
+	/// Refers to the underlying [`Vec`] for manual reading
+	pub const fn inner(&self) -> &Vec<Params> {
 		&self.0
 	}
 
-	/// Extracts the underlying [`Vec`] for manual access
-	pub fn into_inner(self) -> Vec<Params> {
-		self.0
+	/// Refers to the underlying [`Vec`] for manual writing
+	///
+	/// # Safety
+	/// Making the [`Vec`] empty will cause *Undefined Behavior*.
+	pub const unsafe fn inner_mut(&mut self) -> &mut Vec<Params> {
+		&mut self.0
 	}
 
 	/// Checked edit of current output precision
@@ -813,6 +876,12 @@ impl TryFrom<Vec<Params>> for ParamStk {
 	}
 }
 
+impl From<ParamStk> for Vec<Params> {
+	fn from(value: ParamStk) -> Self {
+		value.0
+	}
+}
+
 /// Combined interpreter state storage
 ///
 /// Typically, just use the [`Default`]. Fields are public to allow for presets and extraction of values, see their documentation.
@@ -853,10 +922,10 @@ impl Display for State {
 		write!(f, "{}", {
 			let v: Vec<String> = self.params.inner().iter().map(|par| {
 				let mut ps = String::new();
-				if par.0 != DEFAULT_PARAMS.0 {ps += &format!("{{{}}}k", par.0);}
-				if par.1 != DEFAULT_PARAMS.1 {ps += &format!("{{{}}}i", par.1);}
-				if par.2 != DEFAULT_PARAMS.2 {ps += &format!("{{{}}}o", par.2);}
-				if par.3 != DEFAULT_PARAMS.3 {ps += &format!("{{{}}}m", par.3 as u8);}
+				if par.0 != DEFAULT_PARAMS.0 {ps += &format!("{}k", par.0);}
+				if par.2 != DEFAULT_PARAMS.2 {ps += &format!("{}o", par.2);}
+				if par.3 != DEFAULT_PARAMS.3 {ps += &format!("{}m", par.3 as u8);}
+				if par.1 != DEFAULT_PARAMS.1 {ps += &format!("{}i", par.1);}	//input base last to not affect the others
 				ps
 			}).collect();
 			v.join("{")
@@ -872,14 +941,14 @@ impl State {
 		self.params.0.shrink_to_fit();
 	}
 
-	/// Clear all stored data, do not touch thread handles in `self`
+	/// Clear all stored data, do not touch thread handles
 	pub fn clear_vals(&mut self) {
 		self.mstk = Vec::new();
 		self.regs.clear_vals();
 		self.params = ParamStk::default();
 	}
 
-	/// Replace stored data with contents of `other`, keep thread handles in `self` and discard any in `other`
+	/// Replace stored data with contents of `other`, conflicting thread handles in `other` will be killed
 	pub fn replace_vals(&mut self, other: Self) {
 		self.mstk = other.mstk;
 		self.regs.replace_vals(other.regs);

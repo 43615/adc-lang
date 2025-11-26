@@ -91,7 +91,7 @@ impl ReadLine for LineEditor {
 
 fn input_stream() -> Box<dyn ReadLine + Send> {
 	use linefeed::Signal::*;
-	match Interface::new("") {
+	match Interface::new("") {	//fails when pipes are used
 		Ok(iface) => {
 			//these do not take &mut self, shrug
 			iface.set_report_signal(Break, true);
@@ -233,7 +233,7 @@ fn string_or_bytes(v: &[u8]) -> String {
 	})
 }
 
-fn upper_hex_to_nibble(b: u8) -> Option<u8> {
+const fn upper_hex_to_nibble(b: u8) -> Option<u8> {
 	match b {
 		b'0'..=b'9' => Some(unsafe{b.unchecked_sub(0x30)}),	//SAFETY: underflow is impossible
 		b'A'..=b'F' => Some(unsafe{b.unchecked_sub(0x37)}),
@@ -241,7 +241,7 @@ fn upper_hex_to_nibble(b: u8) -> Option<u8> {
 	}
 }
 
-fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
+const fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 	match b {
 		b'0'..=b'9' => Some(unsafe{b.unchecked_sub(0x30)}),	//SAFETY: underflow is impossible
 		b'A'..=b'Z' => Some(unsafe{b.unchecked_sub(0x37)}),
@@ -262,7 +262,7 @@ pub enum LogLevel {
 }
 
 /// Results of running [`interpreter`], wrappers should handle these differently
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[must_use] pub enum ExecResult {
 	/// Commands ran to completion, request further input
 	Finished,
@@ -783,8 +783,8 @@ pub unsafe fn interpreter(
 						b'x' => {
 							if let Some(top) = st.mstk.pop() {
 								let sec = st.mstk.pop();
-								match Utf8Iter::from_vals(&top, sec.as_deref()) {
-									Ok((mut stk, ret)) => {
+								match Utf8Iter::try_macros(&top, sec.as_deref()) {
+									Ok((stk, ret)) => {
 										if let Some(sec) = sec && ret {	//sec was not used, return
 											st.mstk.push(sec);
 										}
@@ -793,7 +793,7 @@ pub unsafe fn interpreter(
 											call.pop();
 										}
 
-										call.append(&mut stk);
+										call.extend(stk.into_iter().rev());
 										continue 'mac;
 									},
 									Err(e) => {
@@ -1314,7 +1314,7 @@ pub unsafe fn interpreter(
 											Ok(Killed) => {
 												valerr!('j', "Thread {} was killed", ri_nice);
 											},
-											_ => {}
+											_ => {}	//finished or quit with 0
 										}
 
 										reg.v.append(&mut tr.0);
