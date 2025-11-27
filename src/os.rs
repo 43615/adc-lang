@@ -98,7 +98,7 @@ pub unsafe fn read<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> 
 						Ok(_) => {
 							if B {
 								Ok(vec![Value::A(
-									v.into_iter().map(|b| Value::B(BitVec::from_element(b))).collect()
+									v.into_iter().map(|b| Value::N(b.into())).collect()
 								)])
 							}
 							else {
@@ -138,24 +138,23 @@ pub unsafe fn append<const B: bool>(st: &mut State) -> Result<Vec<Value>, String
 				(Value::A(a), Value::S(name)) if B => {
 					match try_appending_fd(name) {
 						Ok(mut fd) => {
-							let mut bytes: Vec<u8> = Vec::new();
+							let mut bytes = Vec::new();
 							for v in a {
-								match v {
-									Value::B(b) if b.len()==8 => {
-										bytes.push(b.as_raw_slice()[0]);
-									},
-									Value::B(b) => {
-										let l = b.len();
-										st.mstk.push(va);
-										st.mstk.push(vb);
-										return Err(format!("Expected byte array, found boolean of length {} in array!", l));
-									},
-									_ => {
-										let t = TypeLabel::from(v);
-										st.mstk.push(va);
-										st.mstk.push(vb);
-										return Err(format!("Expected byte array, found {} in array!", t));
+								if let Value::N(r) = v {
+									if let Ok(u) = u8::try_from(r) {
+										bytes.push(u);
 									}
+									else {
+										st.mstk.push(va);
+										st.mstk.push(vb);
+										return Err("Expected byte array, found non-byte number in array!".into());
+									}
+								}
+								else {
+									let t = TypeLabel::from(v);
+									st.mstk.push(va);
+									st.mstk.push(vb);
+									return Err(format!("Expected byte array, found {} in array!", t));
 								}
 							}
 							match fd.write_all(&bytes) {
@@ -232,24 +231,23 @@ pub unsafe fn write<const B: bool>(st: &mut State) -> Result<Vec<Value>, String>
 				(Value::A(a), Value::S(name)) if B => {
 					match try_writing_fd(name) {
 						Ok(mut fd) => {
-							let mut bytes: Vec<u8> = Vec::new();
+							let mut bytes = Vec::new();
 							for v in a {
-								match v {
-									Value::B(b) if b.len()==8 => {
-										bytes.push(b.as_raw_slice()[0]);
-									},
-									Value::B(b) => {
-										let l = b.len();
-										st.mstk.push(va);
-										st.mstk.push(vb);
-										return Err(format!("Expected byte array, found boolean of length {} in array!", l));
-									},
-									_ => {
-										let t = TypeLabel::from(v);
-										st.mstk.push(va);
-										st.mstk.push(vb);
-										return Err(format!("Expected byte array, found {} in array!", t));
+								if let Value::N(r) = v {
+									if let Ok(u) = u8::try_from(r) {
+										bytes.push(u);
 									}
+									else {
+										st.mstk.push(va);
+										st.mstk.push(vb);
+										return Err("Expected byte array, found non-byte number in array!".into());
+									}
+								}
+								else {
+									let t = TypeLabel::from(v);
+									st.mstk.push(va);
+									st.mstk.push(vb);
+									return Err(format!("Expected byte array, found {} in array!", t));
 								}
 							}
 							match fd.write_all(&bytes) {

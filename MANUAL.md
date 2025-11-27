@@ -377,7 +377,7 @@ Most strings involved here are not guaranteed to be valid UTF-8, particularly on
 - `Sa Sb _write` writes *a* to file *b*, creating/overwriting it if necessary.
 - `Sa Sb _append` appends *a* to the end of file *b*, creating it if necessary.
 - `Sa _read → Sz` reads file *a* into a string, erroring if it doesn't exist.
-- `_writeb`, `_appendb`, and `_readb` operate on the file contents as arrays of bytes, stored as booleans of length 8.
+- `_writeb`, `_appendb`, and `_readb` access the file's bytes directly instead of using lossy string conversion. Byte sequences are flat arrays of numbers 0-255.
 
 
 ## Process execution
