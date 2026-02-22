@@ -1,4 +1,4 @@
-//! Impure commands that access the whole state, manual application.
+//! Impure commands that access the whole state, manual type matching and application.
 //!
 //! New resulting values are written to a `Vec` to enable redirection to array input.
 //!

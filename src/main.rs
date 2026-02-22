@@ -60,8 +60,7 @@ fn main() -> ExitCode {
 		eprintln!("?? {s}");
 		2.into()
 	}
-
-	#[derive(Debug)]
+	
 	enum Argument {
 		Flag(char),
 		Plain(String)
@@ -325,9 +324,8 @@ fn main() -> ExitCode {
 				let start = Utf8Iter::from(st_script);
 
 				let mut nst = State::default();
-				let no_io = Arc::new(Mutex::new(IOStreams::empty()));
 
-				let res = interpreter_no_os(&mut nst, start, no_io, LogLevel::Quiet, None);	//delegate to normal interpreter
+				let res = interpreter_simple(&mut nst, start, None);	//delegate to normal interpreter
 
 				if !matches!(res, Ok(Finished)) {return runtime_error("Invalid state file".into());}	//state files don't quit
 				

@@ -1,4 +1,6 @@
 //! ADC interpreter API. Many safe items are public for manual access.
+//! 
+//! The core function is [`interpreter`], see its documentation as a starting point.
 
 pub mod structs;
 use structs::*;
@@ -25,7 +27,7 @@ use std::sync::{Arc, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
 use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
-use malachite::base::num::arithmetic::traits::{DivRem, NegAssign, Pow};
+use malachite::base::num::arithmetic::traits::{NegAssign, Pow};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
 use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
 use malachite::base::num::random::RandomPrimitiveInts;
@@ -45,7 +47,7 @@ struct LineEditor(Interface<DefaultTerminal>);
 pub trait ReadLine {
 	/// This is called once by every execution of the `?` command within ADC.
 	///
-	/// [`ErrorKind::Interrupted`] causes `?` to error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
+	/// [`ErrorKind::Interrupted`] cancels `?` with an error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
 	fn read_line(&mut self) -> std::io::Result<String>;
 
 	/// If [`Self`] implements a history, clear it.
@@ -148,7 +150,7 @@ fn rng_os() -> RandomPrimitiveInts<u64> {
 	rng_preset(bytes)
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, Hash)]
 enum Command {
 	///monadic pure function
 	Fn1(fns::Mon),
@@ -251,7 +253,7 @@ const fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 }
 
 /// How much information to output on stderr
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogLevel {
 	/// Only output error messages
 	Normal,
@@ -262,22 +264,37 @@ pub enum LogLevel {
 }
 
 /// Results of running [`interpreter`], wrappers should handle these differently
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[must_use] pub enum ExecResult {
-	/// Commands ran to completion, request further input
+	/// All commands completed
 	Finished,
 
-	/// Exit of current instance requested (q), end context
+	/// `q` command (early exit from current set of commands)
 	SoftQuit(u8),
 
-	/// Complete exit requested (`q), terminate
+	/// `` `q `` command (early exit from entire interpreter, if applicable)
 	HardQuit(u8),
 
-	/// Received kill signal
+	/// Received kill signal while executing commands
 	Killed
 }
 
-/// Safe wrapper around [`interpreter`], see its documentation.
+/// Safe wrapper around [`interpreter`] with no IO or OS features.
+///
+/// If built with the `no_os` feature, this is equivalent to [`interpreter_no_io`] and should be preferred.
+pub fn interpreter_simple(
+	st: &mut State,
+	start: Utf8Iter,
+	kill: Option<&Receiver<()>>
+) -> std::io::Result<ExecResult>
+{
+	let no_io = Arc::new(Mutex::new(IOStreams::empty()));
+	interpreter_no_os(st, start, no_io, LogLevel::Quiet, kill)
+}
+
+/// Safe wrapper around [`interpreter`] with no OS features.
+///
+/// If built with the `no_os` feature, this is equivalent to [`interpreter`] and should be preferred.
 pub fn interpreter_no_os(
 	st: &mut State,
 	start: Utf8Iter,
@@ -290,7 +307,24 @@ pub fn interpreter_no_os(
 	unsafe { interpreter(st, start, io, ll, kill, true) }
 }
 
+/// IO-less wrapper around [`interpreter`].
+///
+/// # Safety
+/// See [`interpreter#safety`].
+pub unsafe fn interpreter_no_io(
+	st: &mut State,
+	start: Utf8Iter,
+	kill: Option<&Receiver<()>>,
+	restrict: bool
+) -> std::io::Result<ExecResult>
+{
+	let no_io = Arc::new(Mutex::new(IOStreams::empty()));
+	unsafe { interpreter(st, start, no_io, LogLevel::Quiet, kill, restrict) }
+}
+
 /// Interpreter entry point, executes ADC commands to modify state.
+/// 
+/// This function and its variants are also available as methods of [`State`] if such syntax is preferred.
 ///
 /// # Arguments
 /// - `st`: State struct to work on, modified in-place
@@ -300,7 +334,7 @@ pub fn interpreter_no_os(
 ///   - `io.1`: Output, written to by printing commands
 ///   - `io.2`: Error messages, one per line
 /// - `ll`: Level of verbosity for `io.2`
-/// - `kill`: Kill signal, receiving terminates the interpreter. Polled as often as possible, effect is practically immediate.
+/// - `kill`: Optional kill signal, receiving `()` terminates the interpreter immediately.
 ///   - `Some(_)` will also enable `restrict`, as it's unsafe or impossible to kill the thread while performing some OS interactions.
 /// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
@@ -310,11 +344,11 @@ pub fn interpreter_no_os(
 /// This will result in an incomplete, although internally consistent, [`State`]. Keep that possibility to a minimum when preparing custom [`IOStreams`].
 ///
 /// # Safety
-/// If built without the `no_os` feature (default), passing `kill = None` and `restrict = false` enables OS interactions that are fundamentally unsound in multithreaded contexts.
+/// If built without the `no_os` feature (default), passing `kill = None` and `restrict = false` enables OS interactions, some of which are fundamentally unsound in multithreaded contexts.
 ///
-/// Simultaneously/asynchronously executing multiple instances of this function with said arguments is *Undefined Behavior*. Do not rely on known values of `st` and `start` for safety.
+/// Simultaneously/asynchronously executing multiple instances of this function with said arguments may cause *Undefined Behavior*, potentially including permanent corruption of OS resources.
 ///
-/// Alternatively, [`interpreter_no_os`] provides a safe wrapper.
+/// If OS features are not desired, [`interpreter_no_os`] and [`interpreter_simple`] provide safe wrappers.
 pub unsafe fn interpreter(
 	st: &mut State,
 	start: Utf8Iter,
@@ -328,7 +362,7 @@ pub unsafe fn interpreter(
 	use ExecResult::*;
 
 	let th_name = if kill.is_some() {	//if running in a child thread
-		#[cfg_attr(feature = "no_os", expect(unused_assignments))] { restrict = true; }	//extra safety just in case
+		#[cfg_attr(feature = "no_os", expect(unused_assignments))] { restrict = true; }
 		std::thread::current().name().unwrap().to_owned()
 	}
 	else {
@@ -984,7 +1018,9 @@ pub unsafe fn interpreter(
 													let n= unsafe { Natural::try_from(i).unwrap_unchecked() };	//SAFETY: just checked
 													let mut bytes: Vec<u8> = PowerOf2DigitIterable::<u8>::power_of_2_digits(&n, 8).take(32).collect();
 													bytes.resize(32, 0);
-													rng = Some(rng_preset( unsafe { <[u8; 32]>::try_from(bytes).unwrap_unchecked() } ));
+													rng = Some(rng_preset(
+														unsafe { <[u8; 32]>::try_from(bytes).unwrap_unchecked() }
+													));
 												},
 												_ => {
 													st.mstk.push(va);
@@ -1007,12 +1043,8 @@ pub unsafe fn interpreter(
 						b'w' => {	//wait
 							if let Some(va) = st.mstk.pop() {
 								if let Value::N(r) = &*va {
-									if let Some(dur) = Natural::try_from(r).ok().and_then(|n| {
-										let (s, ns) = n.div_rem(Natural::const_from(1_000_000_000));
-										u64::try_from(&s).ok().map(|s| {
-											let ns = unsafe { u32::try_from(&ns).unwrap_unchecked() };	//SAFETY: remainder always fits
-											std::time::Duration::new(s, ns)
-										})
+									if let Some(dur) = u128::try_from(r).ok().and_then(|ns| {
+										(ns <= std::time::Duration::MAX.as_nanos()).then(|| std::time::Duration::from_nanos_u128(ns))
 									}) {
 										if let Some(rx) = kill {
 											match rx.recv_timeout(dur) {
@@ -1117,6 +1149,9 @@ pub unsafe fn interpreter(
 									st.trim();
 									RE_CACHE.clear();
 								},
+								b"dedup" => {
+									st.dedup();
+								},
 								b"clhist" => {
 									io.lock().unwrap().0.clear_history();
 								},
@@ -1136,7 +1171,20 @@ pub unsafe fn interpreter(
 									{
 										match (restrict, os::OS_CMDS.get(&word).copied()) {
 											(false, Some(oscmd)) => {
-												match unsafe { oscmd(st) } {	//SAFETY: only reachable in the main thread, according to interpreter contract
+												let res;
+												unsafe {
+													if os::ACCESS {	//breach of interpreter safety contract
+														panic!("Failsafe panic: Attempted to execute multiple OS commands simultaneously. See documentation of `interpreter` function for safe usage.");
+													}
+													else {
+														os::ACCESS = true;
+													}
+
+													res = oscmd(st);
+
+													os::ACCESS = false;
+												}
+												match res {
 													Ok(mut v) => {
 														append!(v);
 													}
@@ -1256,6 +1304,7 @@ pub unsafe fn interpreter(
 									let th_io = Arc::clone(&io);
 
 									match tb.spawn(move || {
+										////////////////////////////////
 										let th_res = interpreter_no_os(&mut th_st, th_start, th_io, ll, Some(&krx));
 
 										let _ = jrx.recv();	//wait for join signal
@@ -1270,6 +1319,7 @@ pub unsafe fn interpreter(
 										);
 
 										(th_st.mstk, th_res)
+										////////////////////////////////
 									}) {
 										Ok(jh) => {
 											st.regs.get_mut(&ri).th = Some((jh, ktx, jtx));

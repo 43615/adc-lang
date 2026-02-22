@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::ptr::NonNull;
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
-use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, DivMod, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal};
+use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value::{self, *};
@@ -446,12 +446,11 @@ dya!(modu
 	},
 
 	N(ra), N(rb), _ => {	//modulo
-		let (ia, ib) = (r_i(ra)?, r_i(rb)?);
-		if ib == Rational::ZERO {	//undefined
+		if *rb == Rational::ZERO {	//undefined
 			Err(Arith("Reduction mod 0".into()))
 		}
 		else {
-			Ok(N(ia.mod_op(ib).into()))
+			Ok(N(ra.mod_op(rb)))
 		}
 	},
 
@@ -477,15 +476,14 @@ dya!(euc
 	},
 
 	N(ra), N(rb), _ => {	//euclidean division
-		let (ia, ib) = (r_i(ra)?, r_i(rb)?);
-		if ib == Rational::ZERO {	//undefined
+		if *rb == Rational::ZERO {	//undefined
 			Err(Arith("Euclidean division by 0".into()))
 		}
 		else {
-			let (quot, rem) = ia.div_mod(ib);
+			let rem = ra.mod_op(rb);
 			Ok(A(vec![
-				N(quot.into()),
-				N(rem.into())
+				N((ra - &rem) / rb),
+				N(rem)
 			]))
 		}
 	},

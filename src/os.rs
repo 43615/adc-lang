@@ -10,9 +10,9 @@ use bitvec::prelude::*;
 use crate::errors::TypeLabel;
 use crate::structs::{Value, State};
 
-/// OS command
+/// OS command definition
 pub type OsCmd = unsafe fn(&mut State) -> Result<Vec<Value>, String>;
-/// Function template for OS command
+/// Function template for OS command, `unsafe` as an internal lint
 macro_rules! oscmd {
     ($name:ident, $st:ident $block:block) => {
 		pub unsafe fn $name($st: &mut State) -> Result<Vec<Value>, String> {
@@ -20,7 +20,6 @@ macro_rules! oscmd {
 		}
 	}
 }
-
 
 pub const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
 	//static env queries
@@ -57,8 +56,11 @@ pub const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
 
 /// Persistent map of child process handles
 ///
-/// SAFETY: Module is private, interpreter has a safety contract that forbids access from multiple threads.
+/// SAFETY: Multithreaded access is forbidden by interpreter safety contract and the flag below.
 static mut PIDS: LazyCell<HashMap<u32, Child>> = LazyCell::new(HashMap::new);
+
+/// `true` during OS command execution, likely failsafe to catch misuse of interpreter function.
+pub static mut ACCESS: bool = false;
 
 oscmd!(osarch, _st {
 	Ok(vec![Value::S(std::env::consts::ARCH.into())])
@@ -331,9 +333,8 @@ oscmd!(load, st {
 							else {
 								let st_mac = crate::structs::Utf8Iter::from(v);
 								let mut new_st = State::default();
-								let no_io = std::sync::Arc::new(std::sync::Mutex::new(crate::IOStreams::empty()));
 								
-								let res = crate::interpreter_no_os(&mut new_st, st_mac, no_io, crate::LogLevel::Quiet, None);	//one recursive call as a treat
+								let res = crate::interpreter_simple(&mut new_st, st_mac, None);	//one recursive call as a treat
 								
 								if !matches!(res, Ok(crate::ExecResult::Finished)) {
 									let name = name.to_owned();
@@ -615,7 +616,12 @@ oscmd!(spawn, st {
 				(Value::S(input), Value::S(command)) => {
 					let child = try_child(command, input).inspect_err(|_| { st.mstk.push(va); st.mstk.push(vb); })?;
 					let pid = child.id();
-					unsafe { #[expect(static_mut_refs)] PIDS.insert(pid, child); }
+					unsafe {
+						#[expect(static_mut_refs)]
+						if PIDS.insert(pid, child).is_some() {
+							panic!("Impossible OS error: Duplicate child process ID: {pid}");
+						}
+					}
 					Ok(vec![Value::N(pid.into())])
 				},
 				_ => {

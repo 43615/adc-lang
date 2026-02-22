@@ -85,7 +85,7 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 - For the above printing commands, prefixing `` ` `` will print `[brackets]` around strings.
 - `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
 - `_clhist` clears the input history. Does nothing if no history is implemented.
-- **CLI:** uses the IO streams of the process, input uses an additional [line editor](https://crates.io/crates/linefeed). The library may be attached to other streams using a generic interface.
+- **CLI:** uses the IO streams of the process, input uses an additional [line editor](https://crates.io/crates/linefeed) when running interactively in a supported terminal. The library may be attached to other streams using a generic interface.
 
 
 # Numbers
@@ -158,8 +158,8 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `Na g → NFz`: Natural logarithm of *a*. Errors if *a* ≤ 0.
 - `Na Nb G → NFz`: Base-*b* logarithm of *a*. Errors if *a* ≤ 0 or *b* = 1.
   - `Na Nb G → NZz`: Exact logarithm if *a* is an integer power of *b*.
-- `NZa NZb % → NZz`: *a* modulo *b*. Errors if *b* = 0.
-- `NZa NZb ~ → (NZy NZz)`: Integer division of *a* by *b*, with quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
+- `Na Nb % → Nz`: *a* modulo *b*. *z* has the same sign as *b*. Errors if *b* = 0.
+- `Na Nb ~ → (NZy Nz)`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
 - `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
 - `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
   - `` `< `` / `` `= `` / `` `> `` are total orders, returning `F` instead of erroring if the types are different.
@@ -254,8 +254,8 @@ Strings also use overloaded variants of arithmetic functions:
 Essential commands for interacting with values already on the stack, or the stack itself.
 - `c` clears the stack.
 - `NPa C` deletes the top *a* values from the stack.
-- `d` duplicates the top-of-stack value. In this implementation, values are stored as shared references to enable efficient shallow copies.
-- `NPa D` duplicates the top *a* values, keeping their order.
+- `d` duplicates the top-of-stack value. This implementation uses shallow copies.
+- `NPa D` duplicates the top *a* values, in their original order.
 - `r` swaps the top 2 values.
 - `NPa R` rotates the top *a* values upwards, or downwards with `` ` ``.
 - `fz → NPz` returns the current depth of the stack.
@@ -265,12 +265,12 @@ Essential commands for interacting with values already on the stack, or the stac
 
 # Array polymorphism
 
-Arrays are ordered, contiguous lists of objects with arbitrary length. Due to the fact that the contained objects can themselves be arrays, their dimensionality is unlimited. In ADC, arrays are written `(with parentheses)`. Here's an example of inputting a 2-dimensional array:
+Arrays are ordered, contiguous lists of values with arbitrary length. Due to the fact that the contained values can themselves be arrays, their dimensionality is unlimited. In ADC, arrays are written `(with parentheses)`. Here's an example of inputting a 2-dimensional array:
 ```
 ((1 2) (3 4) (5 6))
 ```
 
-Arrays can contain arbitrary combinations of object types as well as have arbitrary length and nesting:
+Arrays can contain arbitrary combinations of value types as well as have arbitrary length and nesting:
 ```
 (((()) T 1337) [Sample Text] ())
 ```
@@ -298,7 +298,7 @@ Array input works by shadowing the main stack with a temporary buffer, and pushi
 # Registers
 
 Registers are auxiliary stacks, identified by rational indices. Commands that operate on registers are annotated with `⒭`, meaning that the command either takes the next command character as a register index (Unicode character value) or uses the "register pointer" if it's set.
-- `Xa :` sets the register pointer. Numbers are used literally, booleans and strings are [converted](#type-conversion) to an integer form (first bit/byte to most significant).
+- `Xa :` sets the register pointer. Numbers are used literally, TODO: booleans and strings are [converted](#type-conversion) to an integer form (first bit/byte to most significant).
   - `` `: → Nz`` reads and clears the pointer, `()` if unset.
 - `Xa s⒭` saves a value to a register, overwriting the top if it exists.
 - `Xa S⒭` pushes a value to a register.
@@ -331,7 +331,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `` `j⒭ `` kills the thread (effective immediately) and also pushes the main stack to the register.
 - `_joinall` and `_killall` perform the above commands for all current child threads.
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
-- Joining and killing is propagated to grandchild threads, zombie threads are impossible.
+- Joining and killing is propagated to grandchild threads, zombie threads are impossible under normal circumstances.
 - Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
 - [OS commands](#os-commands) are disabled in child threads to prevent any corruption of OS resources. [IO streams](#input-and-output) are safely shared using a mutex (note that `?` is a blocking operation).
 
@@ -345,7 +345,8 @@ Macro execution may also be delegated to a separate thread. Child threads are at
   - `` `q `` is a "hard" quit, which may be handled differently.
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
-- `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving actual data unchanged. Use after large operations.
+- `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving actual data unchanged. Use after operations that need large temporary values.
+- `_dedup` optimizes memory by converting any equal values into shallow copies of just one of them. Requires O(n²) time, use sparingly.
 - `_clall` clears the entire current state. Thread handles are unaffected.
 
 
@@ -361,12 +362,12 @@ Most strings involved here are not guaranteed to be valid UTF-8, particularly on
 - `_osarch → Sz` returns the [CPU architecture](https://doc.rust-lang.org/std/env/consts/constant.ARCH.html) of the running system.
 - `_osfamily → Sz` returns the [OS family](https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html) of the running system.
 - `_osname → Sz` returns the [OS name](https://doc.rust-lang.org/std/env/consts/constant.OS.html) of the running system.
-- `_pid → NNz` returns the process ID of the interpreter process.
+- `_pid → NNz` returns the process ID of the interpreter.
 - `Sa Sb _setvar` sets the environment variable *a* to the value *b*, clearing it if empty.
 - `Sa _getvar → Sz` reads the environment variable *a*, empty string if unset.
 - `Sa _setdir` changes the interpreter's working directory to path *a*.
 - `_getdir → Sz` returns the current working directory.
-- `_homedir → Sz` returns the executing user's home directory, empty string if unknown.
+- `_homedir → Sz` returns the executing user's home directory, empty string if N/A or unknown.
 - `_tempdir → Sz` returns a path to a temporary directory.
 
 

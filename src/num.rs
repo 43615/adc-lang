@@ -260,7 +260,7 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 	
 	let mut sign = r.sign() == Less;
 	
-	#[allow(clippy::tuple_array_conversions)]
+	#[expect(clippy::tuple_array_conversions)]
 	for n in [numer, denom] {
 		if *o > Natural::const_from(10) {
 			res.push(b'\'');	//high base prefix

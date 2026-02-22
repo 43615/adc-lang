@@ -2,12 +2,15 @@
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::sync::{Arc, RwLock, mpsc::Sender};
+use std::sync::{Arc, RwLock, mpsc::Sender, Mutex};
+use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
 use malachite::base::num::basic::traits::{Zero, One};
 use regex::{Regex, RegexBuilder};
+use crate::{ExecResult, IOStreams, LogLevel};
+pub use crate::errors::Utf8Error;
 
 #[derive(Debug)]
 pub enum Value {
@@ -57,6 +60,44 @@ impl Clone for Value {
 		}
 	}
 }
+
+impl PartialEq for Value {
+	fn eq(&self, other: &Self) -> bool {
+		use Value::*;
+		match (self, other) {
+			(A(aa), A(ab)) => {	//compare arrays, heap DFS
+				if aa.len() != ab.len() {return false;}
+				let mut stk: Vec<(std::slice::Iter<Value>, std::slice::Iter<Value>)> = vec![(aa.iter(), ab.iter())];	//"call stack"
+				while let Some((ia, ib)) = stk.last_mut() {	//keep operating on top iters
+					if let (Some(va), Some(vb)) = (ia.next(), ib.next()) {	//advance them
+						match (va, vb) {
+							(A(aa), A(ab)) => {	//nested arrays encountered
+								if aa.len() != ab.len() {return false;}
+								stk.push((aa.iter(), ab.iter()));	//"recursive call"
+							},
+							(A(_), _) | (_, A(_)) => {return false;},
+							(B(ba), B(bb)) => if ba != bb {return false;},
+							(S(sa), S(sb)) => if sa != sb {return false;},
+							(N(na), N(nb)) => if na != nb {return false;},
+							_ => {return false;}
+						}
+					}
+					else {	//top iters have ended
+						stk.pop();	//"return"
+					}
+				}
+				true
+			},
+			(A(_), _) | (_, A(_)) => false,	//array and scalar
+			//both scalars:
+			(B(ba), B(bb)) => ba == bb,
+			(S(sa), S(sb)) => sa == sb,
+			(N(na), N(nb)) => na == nb,
+			_ => false
+		}
+	}
+}
+impl Eq for Value {}
 
 impl Value {
 	/// Prints scalar values, passing `A` is undefined behavior. `sb` prints brackets around strings.
@@ -158,7 +199,7 @@ pub fn reg_index_nice(ri: &Rational) -> String {
 		})
 }
 
-pub type ThreadResult = (Vec<Arc<Value>>, std::io::Result<crate::ExecResult>);
+pub type ThreadResult = (Vec<Arc<Value>>, std::io::Result<ExecResult>);
 
 #[derive(Default, Debug)]
 pub struct Register {
@@ -272,6 +313,7 @@ impl RegStore {
 				true
 			}
 		});
+		self.high.shrink_to_fit();
 	}
 
 	/// Clear all values, don't touch thread handles
@@ -290,6 +332,9 @@ impl RegStore {
 	pub fn replace_vals(&mut self, mut other: Self) {
 		for (reg, oreg) in self.low.iter_mut().zip(other.low.iter_mut()) {
 			std::mem::swap(&mut reg.v, &mut oreg.v);	//swap to reuse allocations, other will be dropped anyway
+			if reg.th.is_none() {
+				reg.th = oreg.th.take();
+			}
 		}
 		self.high.retain(|ri, reg| {
 			if let Some(mut oreg) = other.high.remove(ri) {	//if other has the same reg, overwrite self with its values
@@ -298,6 +343,7 @@ impl RegStore {
 					reg.th = oreg.th.take();
 				}
 				!reg.v.is_empty() || reg.th.is_some()
+				//oreg.th drops here, which kills the thread
 			}
 			else {	//erase values in self, but keep thread handles
 				reg.v = Vec::new();
@@ -483,7 +529,8 @@ impl Utf8Iter<'_> {
 	/// - Overlong encodings (3-byte below U+0800 or 4-byte below U+10000)
 	/// - UTF-16 surrogates (U+D800–DFFF)
 	/// - Values above U+10FFFF
-	pub fn try_next_char(&mut self) -> Result<char, String> {
+	pub fn try_next_char(&mut self) -> Result<char, Utf8Error> {
+		use Utf8Error::*;
 		let (bytes, pos): (&[u8], &mut usize) = match self {
 			Self::Borrowed {bytes, pos} => (bytes, pos),
 			Self::Owned {bytes, pos} => (bytes, pos)
@@ -499,14 +546,14 @@ impl Utf8Iter<'_> {
 
 				//continuation byte
 				0x80..=0xBF => {
-					Err(format!("Continuation byte at start of character: [\\{b0:02X}]"))
+					Err(ContAtStart(b0))
 				}
 
 				//2-byte char
 				0xC2..=0xDF => {
 					if let Some(b1) = bytes.get(*pos+1).copied() {
 						if !(0x80..=0xBF).contains(&b1) {
-							return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}]"));
+							return Err(NonCont2(b0, b1));
 						}
 						c = ((b0 & 0x1F) as u32) << 6
 							| (b1 & 0x3F) as u32;
@@ -515,7 +562,7 @@ impl Utf8Iter<'_> {
 						Ok(unsafe{char::from_u32_unchecked(c)})
 					}
 					else {
-						Err(format!("Unexpected end of string: [\\{b0:02X}]"))
+						Err(Missing1(b0))
 					}
 				}
 
@@ -524,30 +571,30 @@ impl Utf8Iter<'_> {
 					if let Some(b1) = bytes.get(*pos+1).copied() {
 						if let Some(b2) = bytes.get(*pos+2).copied() {
 							if !(0x80..=0xBF).contains(&b1) {
-								return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
+								return Err(NonCont3(b0, b1, b2));
 							}
 							if !(0x80..=0xBF).contains(&b2) {
-								return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
+								return Err(NonCont3(b0, b1, b2));
 							}
 							c = ((b0 & 0x0F) as u32) << 12
 								| ((b1 & 0x3F) as u32) << 6
 								| (b2 & 0x3F) as u32;
 							if c < 0x0800 {
-								return Err(format!("Overlong encoding of U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
+								return Err(Overlong3(c, b0, b1, b2));
 							}
 							if (0xD800u32..=0xDFFFu32).contains(&c) {
-								return Err(format!("Unexpected UTF-16 surrogate U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"));
+								return Err(Utf16Surr(c, b0, b1, b2));
 							}
 							//all good:
 							*pos += 3;
 							Ok(unsafe{char::from_u32_unchecked(c)})
 						}
 						else {
-							Err(format!("Unexpected end of string: [\\{b0:02X}\\{b1:02X}]"))
+							Err(Missing2(b0, b1))
 						}
 					}
 					else {
-						Err(format!("Unexpected end of string: [\\{b0:02X}]"))
+						Err(Missing1(b0))
 					}
 				}
 
@@ -557,46 +604,46 @@ impl Utf8Iter<'_> {
 						if let Some(b2) = bytes.get(*pos+2).copied() {
 							if let Some(b3) = bytes.get(*pos+3).copied() {
 								if !(0x80..=0xBF).contains(&b1) {
-									return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
+									return Err(NonCont4(b0, b1, b2, b3));
 								}
 								if !(0x80..=0xBF).contains(&b2) {
-									return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
+									return Err(NonCont4(b0, b1, b2, b3));
 								}
 								if !(0x80..=0xBF).contains(&b3) {
-									return Err(format!("Non-continuation byte in character: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
+									return Err(NonCont4(b0, b1, b2, b3));
 								}
 								c = ((b0 & 0x07) as u32) << 18
 									| ((b1 & 0x3F) as u32) << 12
 									| ((b2 & 0x3F) as u32) << 6
 									| (b3 & 0x3F) as u32;
 								if c < 0x10000 {
-									return Err(format!("Overlong encoding of U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
+									return Err(Overlong4(c, b0, b1, b2, b3));
 								}
 								if c > 0x10FFFF {
-									return Err(format!("Out-of-range character U+{c:04X}: [\\{b0:02X}\\{b1:02X}\\{b2:02X}\\{b3:02X}]"));
+									return Err(TooLarge(c, b0, b1, b2, b3));
 								}
 								//all good:
 								*pos += 4;
 								Ok(unsafe{char::from_u32_unchecked(c)})
 							}
 							else {
-								Err(format!("Unexpected end of string: [\\{b0:02X}\\{b1:02X}\\{b2:02X}]"))
+								Err(Missing3(b0, b1, b2))
 							}
 						}
 						else {
-							Err(format!("Unexpected end of string: [\\{b0:02X}\\{b1:02X}]"))
+							Err(Missing2(b0, b1))
 						}
 					}
 					else {
-						Err(format!("Unexpected end of string: [\\{b0:02X}]"))
+						Err(Missing1(b0))
 					}
 				}
 
-				0xC0 | 0xC1 | 0xF5..=0xFF => Err(format!("Impossible byte in string: [\\{b0:02X}]")),
+				0xC0 | 0xC1 | 0xF5..=0xFF => Err(Impossible(b0)),
 			}
 		}
 		else { 
-			Err(format!("Position out of bounds: {}", *pos))
+			Err(OutOfBounds(*pos, bytes.len()))
 		}
 	}
 
@@ -788,7 +835,8 @@ impl ParamStk {
 	/// Refers to the underlying [`Vec`] for manual writing
 	///
 	/// # Safety
-	/// Making the [`Vec`] empty will cause *Undefined Behavior*.
+	/// Making the [`Vec`] empty will cause *Undefined Behavior* in most of the other methods, which are used implicitly by the interpreter.
+	/// Use [`Self::clear`] to create a default context.
 	pub const unsafe fn inner_mut(&mut self) -> &mut Vec<Params> {
 		&mut self.0
 	}
@@ -882,13 +930,15 @@ impl From<ParamStk> for Vec<Params> {
 	}
 }
 
-/// Combined interpreter state storage
+/// Interpreter state storage bundle
 ///
 /// Typically, just use the [`Default`]. Fields are public to allow for presets and extraction of values, see their documentation.
 ///
 /// `regs` may contain thread handles, which are not copied with [`Clone`]. To preserve thread handles in `self`, use:
 /// - `state.clear_vals();` instead of `state = State::default();`
 /// - `state.replace_vals(other);` instead of `state = other;`
+///
+/// The "interpreter(...)" methods are just an alternative syntax for the functions in the [crate root](crate).
 #[derive(Default, Debug, Clone)]
 pub struct State {
 	/// Main stack, [`Arc`] to allow shallow copies
@@ -953,5 +1003,65 @@ impl State {
 		self.mstk = other.mstk;
 		self.regs.replace_vals(other.regs);
 		self.params = other.params;
+	}
+
+	/// Finds any equal values and replaces them with shallow copies of one of them. Expensive O(n²) operation, use sparingly.
+	pub fn dedup(&mut self) {
+		let mut regs: Vec<&mut [Arc<Value>]> = vec![&mut self.mstk];	//queue up main stack
+		regs.extend(self.regs.low.iter_mut().map(|reg| &mut reg.v[..]));	//and low regs
+		regs.extend(self.regs.high.values_mut().map(|reg| &mut reg.v[..]));	//and high regs
+		while let Some(reg) = regs.pop() {
+			for i in 1..=reg.len() {	//goofy manual iteration to avoid redundant comparisons
+				let (done, rest) = unsafe { reg.split_at_mut_unchecked(i) };	//isolate unprocessed values
+				let sample = unsafe { done.last().unwrap_unchecked() };	//current value
+				for other in rest.iter_mut().chain(regs.iter_mut().flat_map(|reg| reg.iter_mut())) {	//look at rest and all other regs
+					if **sample == **other { *other = Arc::clone(sample) }	//dedup
+				}
+			}
+		}
+	}
+	
+	#[expect(clippy::missing_safety_doc)]
+	pub unsafe fn interpreter(
+		&mut self,
+		start: Utf8Iter,
+		io: Arc<Mutex<IOStreams>>,
+		ll: LogLevel,
+		kill: Option<&Receiver<()>>,
+		restrict: bool
+	) -> std::io::Result<ExecResult>
+	{ 
+		unsafe { crate::interpreter(self, start, io, ll, kill, restrict) }
+	}
+
+	#[expect(clippy::missing_safety_doc)]
+	pub unsafe fn interpreter_no_io(
+		&mut self,
+		start: Utf8Iter,
+		kill: Option<&Receiver<()>>,
+		restrict: bool
+	) -> std::io::Result<ExecResult>
+	{
+		unsafe { crate::interpreter_no_io(self, start, kill, restrict) }
+	}
+
+	pub fn interpreter_no_os(
+		&mut self,
+		start: Utf8Iter,
+		io: Arc<Mutex<IOStreams>>,
+		ll: LogLevel,
+		kill: Option<&Receiver<()>>,
+	) -> std::io::Result<ExecResult>
+	{
+		crate::interpreter_no_os(self, start, io, ll, kill)
+	}
+
+	pub fn interpreter_simple(
+		&mut self,
+		start: Utf8Iter,
+		kill: Option<&Receiver<()>>
+	) -> std::io::Result<ExecResult>
+	{
+		crate::interpreter_simple(self, start, kill)
 	}
 }
