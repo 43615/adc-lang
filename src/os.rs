@@ -1,27 +1,28 @@
-//! OS-interfacing commands, only safe to use in a single thread
+//! OS-interfacing commands, restricted to single-threaded access
 
 use std::cell::LazyCell;
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio, Child};
+use std::sync::Mutex;
 use bitvec::prelude::*;
-// use crate::cmds::*;
 use crate::errors::TypeLabel;
 use crate::structs::{Value, State};
 
 /// OS command definition
-pub type OsCmd = unsafe fn(&mut State) -> Result<Vec<Value>, String>;
-/// Function template for OS command, `unsafe` as an internal lint
+pub type OsCmd = fn(&mut State) -> Result<Vec<Value>, String>;
+/// Function template for OS command
 macro_rules! oscmd {
     ($name:ident, $st:ident $block:block) => {
-		pub unsafe fn $name($st: &mut State) -> Result<Vec<Value>, String> {
+		fn $name($st: &mut State) -> Result<Vec<Value>, String> {
 			$block
 		}
 	}
 }
 
-pub const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
+/// Map of function names. The contained [OsCmd]s may only be used while a lock is held.
+pub static OS_CMDS: Mutex<phf::Map<&[u8], OsCmd>> = Mutex::new(phf::phf_map! {
 	//static env queries
 	b"osarch" => osarch,
 	b"osfamily" => osfamily,
@@ -52,15 +53,10 @@ pub const OS_CMDS: phf::Map<&[u8], OsCmd> = phf::phf_map! {
 	b"wait" => wait,
 	b"exited" => exited,
 	b"kill" => kill
-};
+});
 
-/// Persistent map of child process handles
-///
-/// SAFETY: Multithreaded access is forbidden by interpreter safety contract and the flag below.
+/// Persistent map of child process handles. Multithreaded access is impossible due to the need to lock OS_CMDS.
 static mut PIDS: LazyCell<HashMap<u32, Child>> = LazyCell::new(HashMap::new);
-
-/// `true` during OS command execution, likely failsafe to catch misuse of interpreter function.
-pub static mut ACCESS: bool = false;
 
 oscmd!(osarch, _st {
 	Ok(vec![Value::S(std::env::consts::ARCH.into())])
@@ -90,7 +86,7 @@ fn try_writing_fd(name: &str) -> Result<File, String> {
 	OpenOptions::new().write(true).create(true).truncate(true).open(name).map_err(|e| format!("Can't open file '{name}' for writing: {e}"))
 }
 
-pub unsafe fn read<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
+fn read<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::S(name) = &*va {
 			let mut v = Vec::new();
@@ -133,7 +129,7 @@ pub unsafe fn read<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> 
 	}
 }
 
-pub unsafe fn append<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
+fn append<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
@@ -226,7 +222,7 @@ pub unsafe fn append<const B: bool>(st: &mut State) -> Result<Vec<Value>, String
 	}
 }
 
-pub unsafe fn write<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
+fn write<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {

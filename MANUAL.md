@@ -92,7 +92,7 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 
 This ADC interpreter uses the highly performant [Malachite](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base >=2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
 
-Some of the available arithmetic functions are irrational-valued, which necessitates usage of floating-point arithmetic to achieve practical performance on real computers. This places hard limits on the range and precision of the arguments and results of these functions. As mentioned [above](#type-annotations-and-restricted-types), such numbers are annotated as `NF`. This interpreter uses 64-bit ("double precision") numbers as defined by IEEE 754-2008 "binary64", which are natively supported by all CPUs worth using (citation needed).
+Some of the available arithmetic functions are irrational-valued, which necessitates usage of floating-point arithmetic to achieve practical performance on real computers. This places hard limits on the range and precision of the arguments and results of these functions. Infinite and NaN results are not representable as rationals and will cause an error. As mentioned [above](#type-annotations-and-restricted-types), such numbers are annotated as `NF`. This interpreter uses 64-bit ("double precision") numbers as defined by IEEE 754-2008 "binary64", which are natively supported by all CPUs worth using (citation needed).
 
 Some functions also have "integer" variants that aren't bound by these limits, but place further restrictions on the arguments. They are automatically selected instead of the floating-point variant whenever possible, as such results are always preferable.
 
@@ -107,8 +107,8 @@ Format specifics:
   - For values |x|<1, the leading 0 may be omitted.
 - Scientific/exponential notation uses `@` (at sign) instead of the more conventional e/E. The exponent values themselves are always interpreted as decimal, but applied to the current input base. Negative exponents also use `` ` ``.
   - If a number starts with `@` (no mantissa), a 1 is implied.
-  - The exponent is technically limited to a signed 64-bit integer, but you'll always run out of memory before that point anyway.
-- Bases above 10 use letters for digits after 9. To include letters in a number, it must be prefixed by `'` (apostrophe). Example with input base 16: `'dEaD.bEeF` = 57005.7458343505859375.
+  - The exponent is technically limited to a signed 64-bit integer, but this limit will never matter in practice.
+- Bases above 10 use letters for digits after 9 (case-insensitive). To include letters in a number, it must be prefixed by `'` (apostrophe). Example with input base 16: `'dEaD.bEeF` = 57005.7458343505859375.
   - Without the apostrophe, letters will be interpreted as commands instead of part of the number.
 - Bases above 36 use a special `'enclosed'` format. Numbers are represented as a space-separated series of digits, which are in decimal themselves. Negatives, fractionals and exponents work identically. Example with input base 100: `` '`12 3.45 0 67@`8' `` = -1203.450067 * 100⁻⁸.
   - Plain numbers without apostrophes are also accepted, and interpreted as decimal.
@@ -124,7 +124,7 @@ These are equally correct ways of expressing a number, as inputting them back wo
 ## Parameters
 
 These are options for controlling number I/O operations:
-- `NPa k` sets the output precision. This limits the amount of displayed significant digits, with 0 meaning unlimited.
+- `NPa k` sets the output precision. This limits the amount of displayed significant digits, 0 means no limit.
   - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
   - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater. This may give surprisingly incorrect results.
@@ -136,7 +136,7 @@ These are options for controlling number I/O operations:
 - `NNa m` chooses a number output mode: 0 = auto, 1 = normal, 2 = scientific, 3 = fraction.
 - `M → NNz` returns the current output mode.
 
-The parameters are stored in bundles like (K, I, O, M), called a "context". These contexts are stored on their own stack, and any relevant operations always use the top context. Curly brackets are used to control contexts in a visually clear way:
+The parameters are stored in bundles like (K, I, O, M), called a "context". These contexts are stored on their own stack, and any relevant operations always use the top context. Curly brackets are used to manage contexts in a visually clear way:
 - `{` pushes a new context with the defaults (0, 10, 10, auto).
 - `}` pops the current context, creating a default one if there is none to return to.
 - `_clpar` clears all contexts, creating a default one.
@@ -167,6 +167,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `Sa n → NFz` returns a mathematical constant (to 64-bit float precision):
   - `e`: Euler's number (e)
   - `pi`: Archimedes' constant (π)
+  - `tau`: Full circle constant (τ)
   - `phi`: Golden ratio (φ)
   - `gamma`: Euler-Mascheroni constant (γ)
   - `delta`: First Feigenbaum constant (δ)
@@ -205,7 +206,7 @@ Operations on booleans are overloaded variants of arithmetic functions:
 - `Ba NPb % → BBz`: *b*th bit of *a*.
 - `Ba NPb ~ → (By Bz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
 - `Xa Yb BBc | → Zz` selects *a* if *c* = `T`, or *b* if *c* = `F`.
-  - `Xa Yb Bc | → Az` makes an array of *a* or *b* for every bit in *c*.
+  - `Xa Yb Bc | → Az` makes an array of copies of *a* or *b* for every bit in *c*.
 - `Ba Bb < → BBz` / `Ba Bb = → BBz` / `Ba Bb > → BBz`: comparisons of booleans. Binary value comparison if lengths are equal, length comparison otherwise.
 
 
@@ -328,12 +329,12 @@ Strings containing ADC commands are called macros, to differentiate them from da
 Macro execution may also be delegated to a separate thread. Child threads are attached to [registers](#registers) in the parent thread and operate on their own `State`, the main stack of which is pushed to the register when complete.
 - `SMa X⒭` executes a (plain) macro in a child thread. The child starts with a blank `State`, or a copy of the parent's if prefixed with `` ` ``.
 - `j⒭` (join) waits for the thread to finish, either by exhausting its commands or quitting. Then, the contents of the child's main stack are pushed to the register.
-- `` `j⒭ `` kills the thread (effective immediately) and also pushes the main stack to the register.
+- `` `j⒭ `` kills the thread and also pushes the main stack to the register. The kill signal is checked before executing any new command.
 - `_joinall` and `_killall` perform the above commands for all current child threads.
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
 - Joining and killing is propagated to grandchild threads, zombie threads are impossible under normal circumstances.
 - Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
-- [OS commands](#os-commands) are disabled in child threads to prevent any corruption of OS resources. [IO streams](#input-and-output) are safely shared using a mutex (note that `?` is a blocking operation).
+- The [IO streams](#input-and-output) and the ability to execute [OS commands](#os-commands) are shared between all threads using mutexes. Competing threads are blocked until the currently occupying thread is finished. Busy and blocked threads are unable to receive their kill signal until they are unblocked and move on to the next command.
 
 
 # Other commands
@@ -346,7 +347,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
 - `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving actual data unchanged. Use after operations that need large temporary values.
-- `_dedup` optimizes memory by converting any equal values into shallow copies of just one of them. Requires O(n²) time, use sparingly.
+- `_dedup` finds any equal values in the whole state and replaces them with shallow copies of just one of them. Requires O(n²) time, use sparingly.
 - `_clall` clears the entire current state. Thread handles are unaffected.
 
 
@@ -387,7 +388,7 @@ Most strings involved here are not guaranteed to be valid UTF-8, particularly on
 - Child processes inherit the interpreter's environment variables (unless overridden) and working directory.
 - Waiting for child processes to finish blocks the interpreter. Unexpectedly non-terminating processes need to be dealt with by OS-specific external means.
 - `Sa Sb _run → (NNx Sy Sz)` runs OS command *b* as a child process using *a* as stdin, waiting for it to finish. *x* is the exit code, *y* and *z* are stdout and stderr.
-- `Sa Sb _spawn → NNz` spawns the process but doesn't wait for it to finish, instead returning its process ID. The following commands can only control processes that were created in this way by the current interpreter.
+- `Sa Sb _spawn → NNz` spawns the process but doesn't wait for it to finish, instead returning its process ID. The following commands can only control processes that were created in this way by the current interpreter process.
 - `NNa _wait → (NNx Sy Sz)` waits for PID *a* to exit and returns its output.
 - `NNa _exited → BBz` returns `T` if the process has exited.
 - `NNa _kill → (NNx Sy Sz)` kills the process immediately and returns its output.
@@ -407,9 +408,9 @@ Error display modes/levels can be switched dynamically:
 - `_debug`: Displays one-line reports of every executed command, prefixed with `DEBUG: `.
 - These options persist for one interpreter instance. **CLI:** Set to `_error` by default unless a `-d` or `-q` flag is set.
 
-If an error occurs, no action is performed. For value errors, this means that the faulty values are returned to the stack.
+Generally, no action is performed upon an error. For value errors, the arguments are returned to the stack.
 
-To enable dynamic error handling and reformatting, there is an "error latch" mechanism:
+To enable dynamic error handling and reformatting, there is an automatic error latch:
 - When an error occurs, the offending command is saved and a counter is set to 0. Every command parsed after that will increment the counter, until the error is cleared or overwritten by a new one. This functionality does not depend on the error display mode.
 - `_err → (NPx SCy Sz)` reads and clears the error. *x* indicates how many commands ago the (most recent) error happened, *y* is the offending command (NUL for unparseable macros), and *z* is the error message (without the `!`/`?` prefix or thread name). Returns `()` if the error latch was empty.
 - This also persists for one interpreter instance.

@@ -54,48 +54,179 @@ pub fn str_cmp(a: &str, b: &str) -> Ordering {
 	}
 }
 
-/// Iterates through an array or promotes a plain value by repeating it endlessly. Needed for rank-polymorphy.
-pub enum PromotingIter<'a> {
-	Arr(&'a [Value], usize),
-	Val(&'a Value)
+pub enum Promote2<'a> {
+	AA {
+		aa: &'a [Value],
+		ab: &'a [Value],
+		i: usize
+	},
+	AS {
+		aa: &'a [Value],
+		vb: &'a Value,
+		i: usize
+	},
+	SA {
+		va: &'a Value,
+		ab: &'a [Value],
+		i: usize
+	}
 }
-impl<'a> From<&'a Value> for PromotingIter<'a> {
-	fn from(value: &'a Value) -> Self {
+impl<'a> TryFrom<(&'a Value, &'a Value)> for Promote2<'a> {
+	type Error = FnErr;
+
+	fn try_from(value: (&'a Value, &'a Value)) -> Result<Self, Self::Error> {
+		use Value::*;
 		match value {
-			Value::A(a) => Self::Arr(a, 0),
-			_ => Self::Val(value)
+			(A(aa), A(ab)) => {
+				if aa.len() != ab.len() { Err(Len2(aa.len(), ab.len())) }
+				else { Ok(Self::AA { aa, ab, i: 0 }) }
+			},
+			(A(aa), vb) => Ok(Self::AS { aa, vb, i: 0 }),
+			(va, A(ab)) => Ok(Self::SA { va, ab, i: 0 }),
+			_ => unreachable!()
 		}
 	}
 }
-impl<'a> Iterator for PromotingIter<'a> {
-	type Item = &'a Value;
+impl<'a> Iterator for Promote2<'a> {
+	type Item = (&'a Value, &'a Value);
+
 	fn next(&mut self) -> Option<Self::Item> {
 		match self {
-			Self::Arr(arr, pos) => {
-				let val = arr.get(*pos);
-				*pos += 1;
-				val
+			Self::AA { aa, ab, i } => {
+				let res = aa.get(*i).map(|va| (va, &ab[*i]));
+				*i += 1;
+				res
 			},
-			Self::Val(v) => {Some(v)}
+			Self::AS { aa, vb, i } => {
+				let res = aa.get(*i).map(|va| (va, &**vb));
+				*i += 1;
+				res
+			},
+			Self::SA { va, ab, i } => {
+				let res = ab.get(*i).map(|vb| (&**va, vb));
+				*i += 1;
+				res
+			},
 		}
 	}
 }
-impl std::iter::FusedIterator for PromotingIter<'_> {}
+impl std::iter::FusedIterator for Promote2<'_> {}
 
-/// If both values are arrays, check if they have the same length
-pub const fn lenck2(a: &Value, b: &Value) -> Result<(), FnErr> {
-	use Value::*;
-	if let (A(aa), A(ab)) = (a, b) { if aa.len() == ab.len() { Ok(()) } else { Err(Len2(aa.len(), ab.len())) } } else { Ok(()) }
-}
-
-/// If two or more values are arrays, check if they have the same length
-pub const fn lenck3(a: &Value, b: &Value, c: &Value) -> Result<(), FnErr> {
-	use Value::*;
-	match (a, b, c) {
-		(A(aa), A(ab), A(ac)) => if aa.len() == ab.len() && ab.len() == ac.len() { Ok(()) } else { Err(Len3(aa.len(), ab.len(), ac.len())) },
-		(A(aa), A(ab), _) => { if aa.len() == ab.len() { Ok(()) } else { Err(Len2(aa.len(), ab.len())) } },
-		(A(aa), _, A(ac)) => { if aa.len() == ac.len() { Ok(()) } else { Err(Len2(aa.len(), ac.len())) } },
-		(_, A(ab), A(ac)) => { if ab.len() == ac.len() { Ok(()) } else { Err(Len2(ab.len(), ac.len())) } },
-		_ => Ok(())
+#[allow(clippy::upper_case_acronyms)]
+pub enum Promote3<'a> {
+	AAA {
+		aa: &'a [Value],
+		ab: &'a [Value],
+		ac: &'a [Value],
+		i: usize
+	},
+	AAS {
+		aa: &'a [Value],
+		ab: &'a [Value],
+		vc: &'a Value,
+		i: usize
+	},
+	ASA {
+		aa: &'a [Value],
+		vb: &'a Value,
+		ac: &'a [Value],
+		i: usize
+	},
+	SAA {
+		va: &'a Value,
+		ab: &'a [Value],
+		ac: &'a [Value],
+		i: usize
+	},
+	ASS {
+		aa: &'a [Value],
+		vb: &'a Value,
+		vc: &'a Value,
+		i: usize
+	},
+	SAS {
+		va: &'a Value,
+		ab: &'a [Value],
+		vc: &'a Value,
+		i: usize,
+	},
+	SSA {
+		va: &'a Value,
+		vb: &'a Value,
+		ac: &'a [Value],
+		i: usize
 	}
 }
+impl<'a> TryFrom<(&'a Value, &'a Value, &'a Value)> for Promote3<'a> {
+	type Error = FnErr;
+
+	fn try_from(value: (&'a Value, &'a Value, &'a Value)) -> Result<Self, Self::Error> {
+		use Value::*;
+		match value {
+			(A(aa), A(ab), A(ac)) => {
+				if aa.len() != ab.len() || ab.len() != ac.len() { Err(Len3(aa.len(), ab.len(), ac.len())) }
+				else { Ok(Self::AAA { aa, ab, ac, i: 0 }) }
+			},
+			(A(aa), A(ab), vc) => {
+				if aa.len() != ab.len() { Err(Len2(aa.len(), ab.len())) }
+				else { Ok(Self::AAS { aa, ab, vc, i: 0 }) }
+			},
+			(A(aa), vb, A(ac)) => {
+				if aa.len() != ac.len() { Err(Len2(aa.len(), ac.len())) }
+				else { Ok(Self::ASA { aa, vb, ac, i: 0 }) }
+			},
+			(va, A(ab), A(ac)) => {
+				if ab.len() != ac.len() { Err(Len2(ab.len(), ac.len())) }
+				else { Ok(Self::SAA { va, ab, ac, i: 0 }) }
+			},
+			(A(aa), vb, vc) => Ok(Self::ASS { aa, vb, vc, i: 0 }),
+			(va, A(ab), vc) => Ok(Self::SAS { va, ab, vc, i: 0 }),
+			(va, vb, A(ac)) => Ok(Self::SSA { va, vb, ac, i: 0 }),
+			_ => unreachable!()
+		}
+	}
+}
+impl<'a> Iterator for Promote3<'a> {
+	type Item = (&'a Value, &'a Value, &'a Value);
+
+	fn next(&mut self) -> Option<Self::Item> {
+		match self {
+			Self::AAA { aa, ab, ac, i } => {
+				let res = aa.get(*i).map(|va| (va, &ab[*i], &ac[*i]));
+				*i += 1;
+				res
+			},
+			Self::AAS { aa, ab, vc, i } => {
+				let res = aa.get(*i).map(|va| (va, &ab[*i], &**vc));
+				*i += 1;
+				res
+			},
+			Self::ASA { aa, vb, ac, i } => {
+				let res = ac.get(*i).map(|vc| (&aa[*i], &**vb, vc));
+				*i += 1;
+				res
+			},
+			Self::SAA { va, ab, ac, i } => {
+				let res = ab.get(*i).map(|vb| (&**va, vb, &ac[*i]));
+				*i += 1;
+				res
+			},
+			Self::ASS { aa, vb, vc, i } => {
+				let res = aa.get(*i).map(|va| (va, &**vb, &**vc));
+				*i += 1;
+				res
+			},
+			Self::SAS { va, ab, vc, i } => {
+				let res = ab.get(*i).map(|vb| (&**va, vb, &**vc));
+				*i += 1;
+				res
+			},
+			Self::SSA { va, vb, ac, i } => {
+				let res = ac.get(*i).map(|vc| (&**va, &**vb, vc));
+				*i += 1;
+				res
+			},
+		}
+	}
+}
+impl std::iter::FusedIterator for Promote3<'_> {}

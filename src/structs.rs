@@ -659,21 +659,20 @@ impl Utf8Iter<'_> {
 	pub fn try_macros(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
 		use Value::*;
 		use crate::errors::TypeLabel;
-		use crate::conv::{PromotingIter, lenck2};
+		use crate::conv::Promote2;
 		if let Some(sec) = sec {	//dyadic form
 			if let Ok(res) = Self::try_macros(top, None) { return Ok(res); }	//see if monadic form succeeds (only strings in top), continue if not
 			match (sec, top) {
 				(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//traverse nested arrays
-					if let Err(e) = lenck2(sec, top) { return Err(e.to_string()); }
-					let mut stk = vec![(PromotingIter::from(sec), PromotingIter::from(top))];
+					let mut stk = vec![Promote2::try_from((sec, top)).map_err(|e| e.to_string())?];
 					let mut res = Vec::new();
 
-					while let Some((ia, ib)) = stk.last_mut() {	//keep operating on the top iters
-						if let (Some(va), Some(vb)) = (ia.next(), ib.next()) {	//advance them
+					while let Some(it) = stk.last_mut() {	//keep operating on the top iters
+						if let Some((va, vb)) = it.next() {	//advance them
 							match (va, vb) {
 								(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//nested array(s)
-									if let Err(e) = lenck2(va, vb) { return Err(e.to_string()); }
-									stk.push((PromotingIter::from(va), PromotingIter::from(vb)));	//"recursive call"
+									let nit = Promote2::try_from((va, vb)).map_err(|e| e.to_string())?;
+									stk.push(nit);	//"recursive call"
 								},
 								(S(sa), B(bb)) => {
 									let nb = Natural::from(bb.count_ones());
@@ -695,7 +694,7 @@ impl Utf8Iter<'_> {
 									return Err("Unexpected string in top array".into());
 								},
 								_ => {
-									return Err(format!("Expected only matching strings and non-strings, found {} and {} in arrays", TypeLabel::from(sec), TypeLabel::from(top)));
+									return Err(format!("Expected only pairs of macro strings and non-strings, found {} and {} in arrays", TypeLabel::from(sec), TypeLabel::from(top)));
 								}
 							}
 						}
@@ -729,7 +728,7 @@ impl Utf8Iter<'_> {
 					unsafe { std::hint::unreachable_unchecked() }
 				},
 				_ => {
-					Err(format!("Expected a string and a non-string, {} and {} given", TypeLabel::from(sec), TypeLabel::from(top)))
+					Err(format!("Expected a macro string and a non-string, {} and {} given", TypeLabel::from(sec), TypeLabel::from(top)))
 				}
 			}
 		}
@@ -748,7 +747,7 @@ impl Utf8Iter<'_> {
 									res.push((s.to_owned().into(), Natural::ONE));
 								},
 								_ => {
-									return Err(format!("Expected only strings, found {} in array", TypeLabel::from(val)));
+									return Err(format!("Expected only macro strings, found {} in array", TypeLabel::from(val)));
 								}
 							}
 						}
@@ -764,7 +763,7 @@ impl Utf8Iter<'_> {
 					Ok((vec![(s.to_owned().into(), Natural::ONE)], true))
 				},
 				_ => {
-					Err(format!("Expected a string, {} given", TypeLabel::from(top)))
+					Err(format!("Expected a macro string, {} given", TypeLabel::from(top)))
 				}
 			}
 		}
@@ -1008,14 +1007,14 @@ impl State {
 	/// Finds any equal values and replaces them with shallow copies of one of them. Expensive O(n²) operation, use sparingly.
 	pub fn dedup(&mut self) {
 		let mut regs: Vec<&mut [Arc<Value>]> = vec![&mut self.mstk];	//queue up main stack
-		regs.extend(self.regs.low.iter_mut().map(|reg| &mut reg.v[..]));	//and low regs
-		regs.extend(self.regs.high.values_mut().map(|reg| &mut reg.v[..]));	//and high regs
+		regs.extend(self.regs.low.iter_mut().filter_map(|reg| (!reg.v.is_empty()).then(|| &mut reg.v[..])));	//and low regs
+		regs.extend(self.regs.high.values_mut().filter_map(|reg| (!reg.v.is_empty()).then(|| &mut reg.v[..])));	//and high regs
 		while let Some(reg) = regs.pop() {
 			for i in 1..=reg.len() {	//goofy manual iteration to avoid redundant comparisons
 				let (done, rest) = unsafe { reg.split_at_mut_unchecked(i) };	//isolate unprocessed values
 				let sample = unsafe { done.last().unwrap_unchecked() };	//current value
-				for other in rest.iter_mut().chain(regs.iter_mut().flat_map(|reg| reg.iter_mut())) {	//look at rest and all other regs
-					if **sample == **other { *other = Arc::clone(sample) }	//dedup
+				for other in rest.iter_mut().chain(regs.iter_mut().flat_map(|reg| reg.iter_mut())) {    //look at rest and all other regs
+					if !Arc::ptr_eq(sample, other) && (**sample == **other) { *other = Arc::clone(sample) }    //dedup if different pointers but equal values
 				}
 			}
 		}

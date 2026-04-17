@@ -177,11 +177,11 @@ enum Command {
 	Space,
 
 	///invalid command
-	#[default] Wrong,
+	#[default] Wrong
 }
 
-/// Dense map of bytes to commands. SAFETY: Length must be exactly 256.
-const CMDS: [Command; 256] = {
+/// Dense map of character bytes to commands
+const CMDS: [Command; 128] = {
 	use Command::*;
 	use fns::*;
 	use cmds::*;
@@ -208,20 +208,12 @@ const CMDS: [Command; 256] = {
 		Exec,		Exec,		Wrong,		Cmd(cls),	Exec,		Wrong,		Exec,		Fn1(log),	Wrong,		Cmd(si),	ExecR,		Cmd(sk),	ExecR,		Cmd(sm),	Fn1(fac),	Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Exec,		Exec,		Cmd(rev),	ExecR,		Fn2(trig),	Wrong,		Fn1(sqrt),	Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong,
-
-		//~~description of what i'm doing:~~ non-ASCII:
-		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
-		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
-		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,
-		Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong,Wrong
+		Exec,		Exec,		Cmd(rev),	ExecR,		Fn2(trig),	Wrong,		Fn1(sqrt),	Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong
 	]
 };
 
 fn byte_cmd(b: u8) -> Command {
-	unsafe {	//SAFETY: length is 256
-		*CMDS.get_unchecked(b as usize)
-	}
+	CMDS.get(b as usize).copied().unwrap_or_default()
 }
 
 fn string_or_bytes(v: &[u8]) -> String {
@@ -334,8 +326,7 @@ pub unsafe fn interpreter_no_io(
 ///   - `io.1`: Output, written to by printing commands
 ///   - `io.2`: Error messages, one per line
 /// - `ll`: Level of verbosity for `io.2`
-/// - `kill`: Optional kill signal, receiving `()` terminates the interpreter immediately.
-///   - `Some(_)` will also enable `restrict`, as it's unsafe or impossible to kill the thread while performing some OS interactions.
+/// - `kill`: Optional kill signal, receiving `()` terminates the interpreter immediately (except when blocked due to an OS command).
 /// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
 /// # Errors
@@ -344,11 +335,9 @@ pub unsafe fn interpreter_no_io(
 /// This will result in an incomplete, although internally consistent, [`State`]. Keep that possibility to a minimum when preparing custom [`IOStreams`].
 ///
 /// # Safety
-/// If built without the `no_os` feature (default), passing `kill = None` and `restrict = false` enables OS interactions, some of which are fundamentally unsound in multithreaded contexts.
+/// If built without the `no_os` feature (as is the default), passing `restrict = false` enables OS interactions from within the language. This function is marked unsafe to act as a speedbump.
 ///
-/// Simultaneously/asynchronously executing multiple instances of this function with said arguments may cause *Undefined Behavior*, potentially including permanent corruption of OS resources.
-///
-/// If OS features are not desired, [`interpreter_no_os`] and [`interpreter_simple`] provide safe wrappers.
+/// When working with untrusted input and/or OS features are not desired, [`interpreter_no_os`] and [`interpreter_simple`] provide safe wrappers.
 pub unsafe fn interpreter(
 	st: &mut State,
 	start: Utf8Iter,
@@ -362,7 +351,6 @@ pub unsafe fn interpreter(
 	use ExecResult::*;
 
 	let th_name = if kill.is_some() {	//if running in a child thread
-		#[cfg_attr(feature = "no_os", expect(unused_assignments))] { restrict = true; }
 		std::thread::current().name().unwrap().to_owned()
 	}
 	else {
@@ -443,7 +431,6 @@ pub unsafe fn interpreter(
 	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::const_from(1))];
 
 	'mac: while let Some((mac, count)) = call.last_mut() {	//while call stack has contents, macro scope:
-		*count -= Natural::ONE;
 		let mut alt = false;
 
 		let mut abuf: Vec<Value> = Vec::new();	//array input buffer
@@ -1169,40 +1156,36 @@ pub unsafe fn interpreter(
 									}
 									#[cfg(not(feature = "no_os"))]
 									{
-										match (restrict, os::OS_CMDS.get(&word).copied()) {
-											(false, Some(oscmd)) => {
-												let res;
-												unsafe {
-													if os::ACCESS {	//breach of interpreter safety contract
-														panic!("Failsafe panic: Attempted to execute multiple OS commands simultaneously. See documentation of `interpreter` function for safe usage.");
-													}
-													else {
-														os::ACCESS = true;
-													}
-
-													res = oscmd(st);
-
-													os::ACCESS = false;
-												}
-												match res {
-													Ok(mut v) => {
-														append!(v);
-													}
-													Err(e) => {
-														if let Some(se) = e.strip_suffix('!') {
-															synerr!('_', "OS command '{}': {}", string_or_bytes(&word), se);
+										match os::OS_CMDS.lock() {
+											Ok(guard) => {
+												match (restrict, guard.get(&word).copied()) {
+													(false, Some(oscmd)) => {
+														let res = oscmd(st);
+														drop(guard);	//release asap
+														match res {
+															Ok(mut v) => {
+																append!(v);
+															},
+															Err(e) => {
+																if let Some(se) = e.strip_suffix('!') {
+																	synerr!('_', "OS command '{}': {}", string_or_bytes(&word), se);
+																}
+																else {
+																	valerr!('_', "OS command '{}': {}", string_or_bytes(&word), e);
+																}
+															}
 														}
-														else {
-															valerr!('_', "OS command '{}': {}", string_or_bytes(&word), e);
-														}
+													},
+													(true, Some(_)) => {
+														synerr!('_', "OS command '{}' is disabled (restricted mode)", string_or_bytes(&word));
+													},
+													_ => {
+														synerr!('_', "Invalid word command '{}'", string_or_bytes(&word));
 													}
 												}
-											}
-											(true, Some(_)) => {
-												synerr!('_', "OS command '{}' is disabled (restricted mode)", string_or_bytes(&word));
 											},
-											_ => {
-												synerr!('_', "Invalid word command '{}'", string_or_bytes(&word));
+											Err(_) => {
+												panic!("A child thread panicked, terminating!");
 											}
 										}
 									}
@@ -1305,7 +1288,7 @@ pub unsafe fn interpreter(
 
 									match tb.spawn(move || {
 										////////////////////////////////
-										let th_res = interpreter_no_os(&mut th_st, th_start, th_io, ll, Some(&krx));
+										let th_res = unsafe { interpreter(&mut th_st, th_start, th_io, ll, Some(&krx), restrict) };
 
 										let _ = jrx.recv();	//wait for join signal
 										th_st.regs.end_threads(	//join children
@@ -1333,7 +1316,7 @@ pub unsafe fn interpreter(
 								else {
 									let ta = TypeLabel::from(&*va);
 									st.mstk.push(va);
-									synerr!('X', "Expected a string, {} given", ta);
+									synerr!('X', "Expected a macro string, {} given", ta);
 								}
 							}
 							else {
@@ -1703,8 +1686,8 @@ pub unsafe fn interpreter(
 											Some(b'e') => {bytes.push(0x1B);},		//escape
 											Some(b'[') => {bytes.push(b'[');},		//literal opening bracket
 											Some(b']') => {bytes.push(b']');},		//literal closing bracket
-											Some(b'\\') => {bytes.push(b'\\');},	//literal backslash
-											Some(b0) => {							//other escapes
+											Some(b'\\') => {bytes.push(b'\\');},		//literal backslash
+											Some(b0) => {								//other escapes
 												if let Some(high) = upper_hex_to_nibble(b0) {	//byte literal
 													if let Some(b1) = mac.next() {
 														if let Some(low) = upper_hex_to_nibble(b1) {
@@ -1762,7 +1745,7 @@ pub unsafe fn interpreter(
 				},
 				Space if b == b'#' => {	//line comment
 					debug!("Line comment");
-					mac.find(|b| *b == b'\n');
+					mac.find(|b| *b == b'\n');	//advance until newline
 				},
 				Space => {
 					//do nothing
@@ -1789,6 +1772,8 @@ pub unsafe fn interpreter(
 			st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
 			dest.clear();	//SAFETY: remove leftover dangling references
 		}
+
+		*count -= Natural::ONE;	//finish current repetition
 
 		if *count == Natural::ZERO {	//all repetitions finished
 			call.pop();

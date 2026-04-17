@@ -59,13 +59,13 @@ macro_rules! tri {
 pub fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 	if let A(aa) = a { unsafe {	//iterate through array, bfs without recursion
 		//NonNull pointers are required because of aliasing rules, soundness is ensured manually
-		let mut az: Vec<Value> = Vec::new();	//resulting array
+		let mut az: Vec<Value> = Vec::with_capacity(aa.len());	//resulting array
 		let mut q: VecDeque<(&Vec<Value>, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays
 		q.push_back((aa, (&mut az).into()));
 		while let Some((src, mut dst)) = q.pop_front() {	//keep reading from front of queue
 			for val in src {	//iterate through current layer
 				if let A(nsrc) = val {	//array encountered, pseudorecursion needed
-					dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
+					dst.as_mut().push(A(Vec::with_capacity(nsrc.len())));	//allocate destination, mirroring the source's array nesting
 					let A(ndst) = dst.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//get pointer to destination
 					q.push_back((nsrc, ndst.into()));	//add nested source and destination arrays to queue
 				}
@@ -90,7 +90,7 @@ pub fn exec2(f: Dya, a: &Value, b: &Value, m: bool) -> Result<Value, FnErr> {
 			let mut q: VecDeque<(&Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays, scalar values in 0,1 get promoted later
 			q.push_back((a, b, (&mut az).into()));
 			while let Some((a, b, mut dst)) = q.pop_front() {	//keep reading from front of queue
-				for (va, vb) in {lenck2(a, b)?; PromotingIter::from(a).zip(PromotingIter::from(b))} {
+				for (va, vb) in Promote2::try_from((a,b))? {
 					match (va, vb) {
 						(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
 							dst.as_mut().push(A(Vec::new()));	//allocate destination, mirroring the source's array nesting
@@ -122,7 +122,7 @@ pub fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, 
 			let mut q: VecDeque<(&Value, &Value, &Value, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays, scalar values in 0,1,2 get promoted later
 			q.push_back((a, b, c, (&mut az).into()));
 			while let Some((a, b, c, mut dst)) = q.pop_front() {    //keep reading from front of queue
-				for ((va, vb), vc) in {lenck3(a, b, c)?; PromotingIter::from(a).zip(PromotingIter::from(b)).zip(PromotingIter::from(c))} {
+				for (va, vb, vc) in Promote3::try_from((a, b, c))? {
 					match (va, vb, vc) {
 						(A(_), A(_), A(_)) |
 						(A(_), A(_), _) | (A(_), _, A(_)) | (_, A(_), A(_)) |
@@ -630,8 +630,9 @@ mon!(fac
 			match sa.as_str() {
 				"e" => std::f64::consts::E,
 				"pi" => std::f64::consts::PI,
-				"phi" => 1.618033988749895,
-				"gamma" => 0.5772156649015329,
+				"tau" => std::f64::consts::TAU,
+				"phi" => std::f64::consts::GOLDEN_RATIO,
+				"gamma" => std::f64::consts::EULER_GAMMA,
 				"delta" => 4.669201609102991,
 				"alpha" => 2.5029078750958928,
 				"epsilon" => f64::EPSILON,

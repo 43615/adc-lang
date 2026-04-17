@@ -13,7 +13,7 @@ pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<N
 	let (mut ipart, temp) = r.to_digits(o);
 	ipart.reverse();	//malachite puts them in reverse order
 	let (mut fpart, mut rpart) = temp.into_vecs();
-	if k == 0 || k >= ipart.len()+fpart.len()+rpart.len() {	//all digits fit
+	if k == 0 || k >= ipart.len()+fpart.len()+rpart.len() {	//unlimited precision or all digits fit
 		// do nothing
 	}
 	else if k >= ipart.len()+fpart.len() {	//not all recurring digits fit
@@ -260,7 +260,6 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 	
 	let mut sign = r.sign() == Less;
 	
-	#[expect(clippy::tuple_array_conversions)]
 	for n in [numer, denom] {
 		if *o > Natural::const_from(10) {
 			res.push(b'\'');	//high base prefix

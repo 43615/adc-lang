@@ -19,18 +19,19 @@ Long and short flags are interchangeable. Short flags may not be concatenated: `
 
 	INSTRUCTIONS
 	------------
-	`-i|--inter <prompt>?` starts an interactive (REPL) session. May use a custom prompt, the default is `> `.
+	`-i|--inter <prompt>?` starts a looping interactive session. May use a custom prompt, the default is `> `.
 		This is the default if no instructions are given. ^C ends the session, ^D runs an empty string.
 	`-e|--exec <macro>*` executes the argument(s) directly as a sequence of ADC commands.
 		Ensure that characters with special uses in your shell's syntax are ignored/escaped properly.
 	`-f|--file <path>*` executes the specified file(s) as a script, without creating or modifying it.
 		If non-flag arguments are given (like `$ adc foo bar`), this is implied.
 	Multiple of these can be used together, which will execute them sequentially. `-i` has to be exited manually to continue the sequence.
+	The normal q command ends the current instruction flag, and a "hard quit" with `q exits the process.
 
 	STATE MANAGEMENT
 	----------------
 	The whole interpreter state can be stored as a file using these flags (or in-language commands).
-	State files are actually just ADC scripts that follow a standard format. The "load" option executes the script and discards the current state.
+	State files are actually just ADC scripts that follow a standard format. The "load" option simply discards the current state and executes the script.
 	`-s|--save <path>` saves the state to a file, creating or overwriting it.
 	`-l|--load <path>` loads a state file, without creating or modifying it.
 	These are also chainable with the instruction flags, which will perform them as part of the sequence.
@@ -38,11 +39,11 @@ Long and short flags are interchangeable. Short flags may not be concatenated: `
 
 	MODES
 	-----
-	`-r|--restrict`: Disables all in-language commands that interact with the OS to protect against untrusted input. Other command line flags are unaffected.
-		Disabling OS commands is also possible with the in-language command `_restrict` (one-way) or the `no_os` crate feature.
+	`-r|--restrict`: Disables all in-language commands that interact with the OS to protect against untrusted input. The above flags are unaffected.
+		Disabling OS commands is also possible with the in-language command `_restrict` (one-way) or by building the crate with `-F no_os`.
 	`-d|--debug`: Debug mode, logs every executed command to stderr.
 	`-q|--quiet`: Quiet mode, suppresses all errors (disables stderr).
-	Debug and Quiet are mutually exclusive. The error display mode is controllable with in-language commands, these options just set the default.
+	Debug and Quiet are mutually exclusive. The error display mode is controllable with in-language commands, these options just set the default for every interpreter instance.
 
 	OTHER
 	-----
