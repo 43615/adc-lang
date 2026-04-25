@@ -851,20 +851,20 @@ impl ParamStk {
 
 	/// Checked edit of current input base
 	pub fn try_set_i(&mut self, r: &Rational) -> Result<(), &'static str> {
-		if let Ok(n) = r.try_into() && n>=2u8 {
+		if let Ok(n) = r.try_into() && n>=1u8 {
 			unsafe { self.0.last_mut().unwrap_unchecked().1 = n; }
 			Ok(())
 		}
-		else {Err("Input base must be a natural number >=2")}
+		else {Err("Input base must be a natural number >=2, or 1 for factoradic")}
 	}
 
 	/// Checked edit of current output base
 	pub fn try_set_o(&mut self, r: &Rational) -> Result<(), &'static str> {
-		if let Ok(n) = r.try_into() && n>=2u8 {
+		if let Ok(n) = r.try_into() && n>=1u8 {
 			unsafe { self.0.last_mut().unwrap_unchecked().2 = n; }
 			Ok(())
 		}
-		else {Err("Output base must be a natural number >=2")}
+		else {Err("Output base must be a natural number >=2, or 1 for factoradic")}
 	}
 
 	/// Checked edit of current output mode

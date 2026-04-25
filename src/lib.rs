@@ -27,8 +27,8 @@ use std::sync::{Arc, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
 use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
-use malachite::base::num::arithmetic::traits::{NegAssign, Pow};
-use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
+use malachite::base::num::arithmetic::traits::{Factorial, NegAssign, Pow};
+use malachite::base::num::basic::traits::{NegativeOne, Zero, One, Two};
 use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
 use malachite::base::num::random::RandomPrimitiveInts;
 use malachite::base::rational_sequences::RationalSequence;
@@ -1402,10 +1402,10 @@ pub unsafe fn interpreter(
 							let mut discard = false;
 							let mut ibase = st.params.get_i().clone();
 
-							match (b == b'\'', ibase > Natural::const_from(36)) {
+							match (b == b'\'', ibase > Natural::const_from(36) || ibase == Natural::ONE) {
 								(false, high_base) => {	//plain
 									mac.back();
-									ibase = if high_base {Natural::const_from(10)} else {ibase};	//if plain but I>36, interpret mantissa with I=10
+									ibase = if high_base {Natural::const_from(10)} else {ibase};	//if plain but I>36, interpret as I=10
 									while let Some(ib) = mac.next() {	//integer part
 										let id = ib.wrapping_sub(0x30);
 										match id {
@@ -1501,10 +1501,16 @@ pub unsafe fn interpreter(
 											}
 										}
 									}
-									let mut ms = Vec::new();
+									let ms;
 									match ns.split(|b| *b == b'@').collect::<Vec<&[u8]>>()[..] {
 										[mpart] => {	//only mantissa
-											ms = mpart.to_vec();
+											if let Some((b'`', rest)) = mpart.split_first() {	//remove and apply negative sign
+												alt = true;
+												ms = rest.to_vec();
+											}
+											else {
+												ms = mpart.to_vec();
+											}
 										},
 										[mpart, epart] => {	//mantissa and exponent
 											ms = mpart.to_vec();
@@ -1538,16 +1544,16 @@ pub unsafe fn interpreter(
 										},
 										ref v => {
 											synerr!('\'', "{} exponent signs (@) in any-base number", v.len() - 1);
-											drop(ms);
 											alt = false;
 											continue 'cmd;
 										}
 									}
-									let mut is = Vec::new();
-									let mut frs = Vec::new();
+									let is;
+									let frs;
 									match ms.split(|b| *b == b'.').collect::<Vec<&[u8]>>()[..] {
 										[ipart] => {
 											is = ipart.to_vec();
+											frs = Vec::new();
 										},
 										[ipart, fpart] => {
 											is = ipart.to_vec();
@@ -1555,7 +1561,6 @@ pub unsafe fn interpreter(
 										},
 										ref v => {
 											synerr!('\'', "{} fractional points (.) in any-base number", v.len() - 1);
-											drop(is);
 											alt = false;
 											continue 'cmd;
 										}
@@ -1565,19 +1570,26 @@ pub unsafe fn interpreter(
 										alt = false;
 										continue 'cmd;
 									}
-									let mut fs = Vec::new();
-									let mut rs = Vec::new();
+									let fs;
+									let rs;
 									match frs.split(|b| *b == b'`').collect::<Vec<&[u8]>>()[..] {
 										[fpart] => {
 											fs = fpart.to_vec();
+											rs = Vec::new();
 										},
 										[fpart, rpart] => {
-											fs = fpart.to_vec();
-											rs = rpart.to_vec();
+											if ibase != Natural::ONE {
+												fs = fpart.to_vec();
+												rs = rpart.to_vec();
+											}
+											else {
+												synerr!('\'', "Recurring digits (`) are not allowed in factoradic numbers");
+												alt = false;
+												continue 'cmd;
+											}
 										},
 										ref v => {
 											synerr!('\'', "{} recurring marks (`) in any-base number", v.len() - 1);
-											drop(fs);
 											alt = false;
 											continue 'cmd;
 										}
@@ -1594,25 +1606,80 @@ pub unsafe fn interpreter(
 										let rd = str::from_utf8(rd).unwrap();
 										rpart.push(Natural::from_str(rd).unwrap());
 									}}
-									for d in ipart.iter().chain(fpart.iter()).chain(rpart.iter()) {
+									if ibase != Natural::ONE { for d in ipart.iter().chain(fpart.iter()).chain(rpart.iter()) {
 										if *d >= ibase {
 											synerr!('\'', "Digit {} is too high for base {}", d, ibase);
 											alt = false;
 											continue 'cmd;
 										}
-									}
+									}}
+									else { for (i, d) in ipart.iter().rev().enumerate().chain(fpart.iter().enumerate()) {
+										if *d >= i+2 {	//highest allowed values are '... 3 2 1.1 2 3 ...'
+											synerr!('\'', "Digit {} is too high for factoradic place {} away from the '.'", d, i);
+											alt = false;
+											continue 'cmd;
+										}
+									}}
 								}
 							}
 
 							let m_empty = ipart.is_empty() && fpart.is_empty() && rpart.is_empty();	//simpler const zero, also keep track of emptiness
 							let mut r;
-							if m_empty {
-								r = Rational::ZERO;
-							}
-							else {
-								ipart.reverse();	//malachite needs reverse order
-								r = Rational::from_digits(&ibase, ipart, RationalSequence::from_vecs(fpart, rpart));
-								if alt {r.neg_assign();}	//negative sign was set using alt
+							match (m_empty, ibase != Natural::ONE) {
+								(true, true) => {	//empty normal
+									r = Rational::ZERO;
+								},
+								(true, false) => {	//empty factoradic
+									if let Some(i) = exp.take() {	//consume "exponent" here
+										if let Ok(u) = u64::try_from(i) {
+											r = Rational::from(Natural::factorial(u+1));
+										}
+										else {
+											r = Rational::from_naturals(Natural::ONE, Natural::factorial(i.unsigned_abs()+1));
+										}
+									}
+									else {
+										r = Rational::ZERO;
+									}
+								},
+								(false, true) => {	//non-empty normal
+									ipart.reverse();	//malachite needs reverse order
+									r = Rational::from_digits(&ibase, ipart, RationalSequence::from_vecs(fpart, rpart));
+									if alt {r.neg_assign();}	//negative sign was set using alt
+								},
+								(false, false) => {	//non-empty factoradic
+									if let Some(i) = exp.take() {	//consume "exponent" here
+										if let Ok(u) = u64::try_from(i) {
+											let mut fi = fpart.into_iter();
+											ipart.extend(fi.by_ref().chain(std::iter::repeat(Natural::ZERO)).take(u as usize));
+											fpart = fi.collect();
+										}
+										else {
+											let mut temp = ipart.split_off(ipart.len().saturating_sub(i.unsigned_abs() as usize));
+											temp.append(&mut fpart);
+											fpart = temp;
+										}
+									}
+
+									let mut ii = ipart.iter().rev().peekable();
+									let mut fi = fpart.iter().peekable();
+									let mut d = Natural::TWO;	//current place value
+
+									r = if let Some(n) = ii.next() {n.into()} else {Rational::ZERO};	//1! digit
+									//further place values are symmetrically reciprocal
+									for n in malachite::natural::exhaustive::exhaustive_natural_range_to_infinity(Natural::const_from(3)) {
+										if let Some(id) = ii.next() {
+											r += Rational::from(id * &d);
+										}
+										if let Some(fd) = fi.next() {
+											r += Rational::from_naturals_ref(fd, &d);
+										}
+										if ii.peek().or_else(|| fi.peek()).is_none() {break;}
+										d *= n;
+									}
+
+									if alt {r.neg_assign();}	//negative sign was set using alt
+								}
 							}
 
 							if get_epart {
@@ -1634,7 +1701,7 @@ pub unsafe fn interpreter(
 										if es.is_empty() { es.push('0'); }
 										if m_empty { r = Rational::ONE; }    //only exponent part present
 										if let Ok(i) = es.parse::<i64>() {
-											r *= Rational::from(st.params.get_i()).pow(i);    //apply exponent, get original ibase
+											r *= Rational::from(ibase).pow(i);    //apply exponent
 										}
 										else {
 											valerr!('\'', "Exponent {} is unrepresentable", es);

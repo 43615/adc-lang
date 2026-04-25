@@ -2,19 +2,113 @@
 
 use std::cmp::Ordering::*;
 use malachite::{Natural, Rational};
-use malachite::base::num::arithmetic::traits::{Parity, Pow, Reciprocal, Sign};
+use malachite::base::num::arithmetic::traits::{Abs, DivMod, Factorial, Floor, Parity, Pow, Reciprocal, Sign};
 use malachite::base::num::basic::traits::{Zero, One, Two};
-use malachite::base::num::conversion::traits::{Digits, WrappingFrom};
+use malachite::base::num::conversion::traits::{ExactFrom, Digits, WrappingFrom};
 use malachite::rational::arithmetic::traits::Approximate;
+
+pub fn factoradic_digits(r: &Rational, k: usize) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
+	let sign = r.sign() == Less;
+	let mut i = Natural::exact_from(r.abs().floor());
+	let mut f = r.abs() - Rational::from(&i);
+	let mut ipart = Vec::new();
+	let mut fpart = Vec::new();
+
+	for d in 2usize.. {	//last factor of current place value, moving outwards:
+		if i!=Natural::ZERO {
+			let (q, r) = i.div_mod(Natural::from(d));
+			i = q;
+			ipart.push(r);
+		}
+		if f!=Rational::ZERO {
+			f *= Rational::from(d);
+			let r = (&f).floor();
+			f -= Rational::from(&r);
+			fpart.push(Natural::exact_from(r));
+		}
+		if i==Natural::ZERO && f==Rational::ZERO {break;}
+	}
+	ipart.reverse();
+	
+	if k == 0 || k >= ipart.len()+fpart.len() {	//unlimited precision or all digits fit
+		//do nothing
+	}
+	else if k >= ipart.len() {	//not all fractional digits fit
+		let len = k - ipart.len();
+		fpart.truncate(len + 1);
+		let mut place = len + 2;	//"base" (max+1) of current place
+		let mut inc = false;
+		let next = fpart.pop().unwrap();	//first discarded digit
+		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
+		if ord != Less {	//round remaining digits if next >= ceil(place/2)
+			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
+			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
+				if !to_even || d.odd() {	//only increment last digit if it's odd
+					*d += Natural::ONE;	//reused for carrying up after a continue
+				}
+				to_even = false;
+				if *d == place {	//roll over
+					*d = Natural::ZERO;
+					if inc {place += 1;}	//adjust for next digit
+					else if place == 2 {inc = true;}
+					else {place -= 1;}
+					continue;
+				}
+				else {
+					break;
+				}
+			}
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over
+				ipart.insert(0, Natural::ONE);	//add leading 1
+			}
+		}
+		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
+			fpart.pop();
+		}
+	}
+	else {	//not all integer digits fit
+		fpart.clear();
+		let mut len = ipart.len();
+		ipart.truncate(1 + k);
+		let mut place = 2 + len - k;	//"base" (max+1) of current place
+		let next = ipart.pop().unwrap();	//first discarded digit
+		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
+		if ord != Less {	//round remaining digits if next >= ceil(place/2)
+			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
+			for d in ipart.iter_mut().rev() {	//carry addition all the way up
+				if !to_even || d.odd() {	//only increment last digit if it's odd
+					*d += Natural::ONE;	//reused for carrying up after a continue
+				}
+				to_even = false;
+				if *d == place {	//roll over
+					*d = Natural::ZERO;
+					place += 1;	//adjust for next digit
+					continue;
+				}
+				else {
+					break;
+				}
+			}
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over
+				ipart.insert(0, Natural::ONE);	//add leading 1
+				len += 1;	//adjust target length
+			}
+		}
+		ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
+	}
+
+	(sign, ipart, fpart, Vec::new())
+}
 
 ///negative, integer, fractional, recurring
 pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
+	if *o == Natural::ONE {return factoradic_digits(r, k);}	//automatic fallback
 	let sign = r.sign() == Less;
 	let (mut ipart, temp) = r.to_digits(o);
 	ipart.reverse();	//malachite puts them in reverse order
 	let (mut fpart, mut rpart) = temp.into_vecs();
 	if k == 0 || k >= ipart.len()+fpart.len()+rpart.len() {	//unlimited precision or all digits fit
-		// do nothing
+		//do nothing
 	}
 	else if k >= ipart.len()+fpart.len() {	//not all recurring digits fit
 		//move the digits that fit into fractionals
@@ -115,7 +209,7 @@ fn chr(d: &Natural) -> u8 {
 ///normal notation from digits
 pub fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], o: &Natural) -> String {
 	let mut res = Vec::new();
-	if *o > Natural::const_from(36) {	//enclosed any-base format
+	if *o > Natural::const_from(36) || *o == Natural::ONE {	//enclosed any-base/factoradic format
 		res.push(b'\'');	//prefix for any-base
 
 		if neg {
@@ -201,7 +295,7 @@ pub fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], 
 		if let Some(pos) = fpart.iter().position(|n| *n != Natural::ZERO) {    //find first nonzero fractional digit
 			let (inew, fnew) = fpart.split_at(pos).1.split_at(1);
 			let mut res = nnorm(neg, inew, fnew, rpart, o);
-			if *o > Natural::const_from(36) {
+			if *o > Natural::const_from(36) || *o == Natural::ONE {
 				res.pop();
 				res += &format!("@`{}'", pos+1);
 			}
@@ -213,7 +307,7 @@ pub fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], 
 		else {	//no nonzero fractional digits, only recurring
 			let exp = fpart.len();
 			let mut res = nnorm(neg, ipart, &[], rpart, o);
-			if *o > Natural::const_from(36) {
+			if *o > Natural::const_from(36) || *o == Natural::ONE {
 				res.pop();
 				res += &format!("@`{exp}'");
 			}
@@ -231,7 +325,7 @@ pub fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], 
 			fnew.pop();
 		}
 		let mut res = nnorm(neg, inew, &fnew, rpart, o);
-		if *o > Natural::const_from(36) {
+		if *o > Natural::const_from(36) || *o == Natural::ONE {
 			res.pop();
 			res += &format!("@{exp}'");
 		}
@@ -247,7 +341,8 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 	let (mut numer, mut denom) = r.to_numerator_and_denominator();
 
 	if k != 0 {
-		let max = o.pow(k as u64);
+		let max = if *o != Natural::ONE { o.pow(k as u64) - Natural::ONE }
+		else { Natural::factorial(k as u64 + 1) - Natural::ONE };
 		if numer > denom {
 			(denom, numer) = r.reciprocal().approximate(&max).to_numerator_and_denominator();
 		}
@@ -261,8 +356,8 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 	let mut sign = r.sign() == Less;
 	
 	for n in [numer, denom] {
-		if *o > Natural::const_from(10) {
-			res.push(b'\'');	//high base prefix
+		if *o > Natural::const_from(10) || *o == Natural::ONE {
+			res.push(b'\'');	//high base/factoradic prefix
 		}
 
 		if sign {
@@ -270,17 +365,22 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 			sign = false;
 		}
 
-		let mut digits = n.to_digits_desc(o);
+		let mut digits = if *o != Natural::ONE {
+			n.to_digits_desc(o)
+		}
+		else {
+			factoradic_digits(&Rational::from(n), k).1
+		};
 		if digits.is_empty() {
 			digits.push(Natural::ZERO);
 		}
 
-		if *o > Natural::const_from(36) {	//any-base
+		if *o > Natural::const_from(36) || *o == Natural::ONE {	//any-base/factoradic
 			for d in digits {
 				res.extend_from_slice(d.to_string().as_bytes());	//add digit values
 				res.push(b' ');
 			}
-			*res.last_mut().unwrap() = b'\'';	//any-base suffix
+			*res.last_mut().unwrap() = b'\'';	//any-base/factoradic suffix
 		}
 		else {	//low base
 			for d in digits {
@@ -298,17 +398,23 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 
 ///shortest of nnorm, nsci, nfrac (in this order)
 pub fn nauto(r: &Rational, k: usize, o: &Natural) -> String {
-	let (neg, ipart, fpart, rpart) = digits(r, k, o);
-	let norm = nnorm(neg, &ipart, &fpart, &rpart, o);
-	let sci = nsci(neg, &ipart, &fpart, &rpart, o);
-	let frac = nfrac(r, k, o);
-	if norm.len() <= sci.len() && norm.len() <= frac.len() {
-		norm
+	if *o != Natural::ONE {
+		let (sign, ipart, fpart, rpart) = digits(r, k, o);
+		let norm = nnorm(sign, &ipart, &fpart, &rpart, o);
+		let sci = nsci(sign, &ipart, &fpart, &rpart, o);
+		let frac = nfrac(r, k, o);
+		if norm.len() <= sci.len() && norm.len() <= frac.len() {
+			norm
+		}
+		else if sci.len() <= frac.len() {
+			sci
+		}
+		else {
+			frac
+		}
 	}
-	else if sci.len() <= frac.len() {
-		sci
-	}
-	else {
-		frac
+	else {	//for factoradics, only use nnorm unless explicitly selected
+		let (sign, ipart, fpart, rpart) = factoradic_digits(r, k);
+		nnorm(sign, &ipart, &fpart, &rpart, o)
 	}
 }

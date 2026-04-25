@@ -105,13 +105,13 @@ Format specifics:
 - Since `-` (minus/hyphen) is an arithmetic function, the character `` ` `` (grave/backtick) is used as the negative sign.
 - Fractional digits start with `.` (period). Recurring digits begin with the same `` ` `` character (at any point after the `.`) and continue until the number ends. For example, 71/700 can be entered as `` 0.10`142857 ``.
   - For values |x|<1, the leading 0 may be omitted.
-- Scientific/exponential notation uses `@` (at sign) instead of the more conventional e/E. The exponent values themselves are always interpreted as decimal, but applied to the current input base. Negative exponents also use `` ` ``.
-  - If a number starts with `@` (no mantissa), a 1 is implied.
+- Scientific/exponential notation uses `@` (at sign) instead of the more conventional e/E. The exponent values themselves are always interpreted as decimal, but applied to the current base. Negative exponents also use `` ` ``.
+  - If a number starts with `@` (no significand), a 1 is implied.
   - The exponent is technically limited to a signed 64-bit integer, but this limit will never matter in practice.
 - Bases above 10 use letters for digits after 9 (case-insensitive). To include letters in a number, it must be prefixed by `'` (apostrophe). Example with input base 16: `'dEaD.bEeF` = 57005.7458343505859375.
   - Without the apostrophe, letters will be interpreted as commands instead of part of the number.
 - Bases above 36 use a special `'enclosed'` format. Numbers are represented as a space-separated series of digits, which are in decimal themselves. Negatives, fractionals and exponents work identically. Example with input base 100: `` '`12 3.45 0 67@`8' `` = -1203.450067 * 100⁻⁸.
-  - Plain numbers without apostrophes are also accepted, and interpreted as decimal.
+  - Plain numbers without apostrophes are also accepted, and interpreted as decimal (including the scientific notation base).
 
 Number output is controlled by the [parameters](#parameters) K, O, and M. There are 3 output modes:
 - Normal: `123456.7`
@@ -121,17 +121,28 @@ Number output is controlled by the [parameters](#parameters) K, O, and M. There 
 These are equally correct ways of expressing a number, as inputting them back would produce the same value. By default, outputting a number considers all 3 modes and picks the shortest one (preference order as listed), but one of these may be forced with the M parameter.
 
 
+## Factoradic numbers
+
+ADC also supports the [factorial/factoradic number system](https://en.wikipedia.org/wiki/Factorial_number_system), accessible as "base 1".
+- Since the digits can be arbitrarily large, factoradic numbers use the same `'enclosed'` format as bases above 36.
+- Although factoradic representations are not canonically defined or used for negative values, ADC allows negation of the whole number with the usual `` ` ``.
+- The place values are extended to fractionals in the canonical manner. Redundant places (0!, 1/0!, 1/1!) are omitted. The resulting place values are `... 120 24 6 2 1.1/2 1/6 1/24 1/120 ...`, and the highest possible digits are `... 5 4 3 2 1.1 2 3 4 ...`.
+- Since all rational numbers have a finite factoradic representation, no recurring digits are ever output or accepted in input (nonzero recurring digits would result in irrationals).
+- The scientific and fractional output modes are not really useful for working with factoradics. They are not used in automatic mode, but may still be selected manually. In particular, scientific notation doesn't correspond to a simple factor but instead to displacement of the significand.
+- As with bases above 36, numbers without apostrophes are interpreted as decimal.
+
+
 ## Parameters
 
-These are options for controlling number I/O operations:
-- `NPa k` sets the output precision. This limits the amount of displayed significant digits, 0 means no limit.
+These are the options for controlling number I/O operations:
+- `NPa k` sets the output precision. This limits the amount of displayed significant digits, with no effect on calculations. The default value of 0 means no limit.
   - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
   - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater. This may give surprisingly incorrect results.
 - `K → NPz` returns the current output precision.
-- `NNa i` sets the input base, must be at least 2. Bases 11-36 require an `'apostrophe` to include letters. Bases over 36 require the `'enclosed'` format, interpreted as decimal otherwise.
+- `NNa i` sets the input base, must be at least 2 (or 1 for factoradics). Bases 11-36 require an `'apostrophe` to include letters. Bases over 36 and factoradics require the `'enclosed'` format, interpreted as decimal otherwise.
 - `I → NNz` returns the current input base.
-- `NNa o` sets the output base, must be at least 2. Bases over 10 are always displayed with the `'apostrophe` prefix or in the `'enclosed'` format.
+- `NNa o` sets the output base, must be at least 2 (or 1 for factoradics). Bases outside of 2-10 are always displayed canonically (`'apostrophe` prefix or `'enclosed'` format).
 - `O → NNz` returns the current output base.
 - `NNa m` chooses a number output mode: 0 = auto, 1 = normal, 2 = scientific, 3 = fraction.
 - `M → NNz` returns the current output mode.
@@ -163,16 +174,18 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
 - `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
   - `` `< `` / `` `= `` / `` `> `` are total orders, returning `F` instead of erroring if the types are different.
+  - These commands were reversed in the original dc for no clear reason. In ADC, `a b >` corresponds to the infix expression `a > b`.
 - `NNa n → NNz`: Factorial of *a*, 0 ≤ *a* ≤ 2⁶⁴-1.
 - `Sa n → NFz` returns a mathematical constant (to 64-bit float precision):
   - `e`: Euler's number (e)
   - `pi`: Archimedes' constant (π)
   - `tau`: Full circle constant (τ)
+  - `deg`: Conversion ratio for degrees/radians (π/180)
   - `phi`: Golden ratio (φ)
   - `gamma`: Euler-Mascheroni constant (γ)
   - `delta`: First Feigenbaum constant (δ)
   - `alpha`: Second Feigenbaum constant (α)
-  - `epsilon`: [Machine epsilon](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats.
+  - `epsilon`: [Machine epsilon](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats. 1+ε is the next representable float after 1.
   - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
 - `NNa N → NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.

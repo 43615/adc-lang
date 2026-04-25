@@ -631,6 +631,7 @@ mon!(fac
 				"e" => std::f64::consts::E,
 				"pi" => std::f64::consts::PI,
 				"tau" => std::f64::consts::TAU,
+				"deg" => 0.017453292519943296,
 				"phi" => std::f64::consts::GOLDEN_RATIO,
 				"gamma" => std::f64::consts::EULER_GAMMA,
 				"delta" => 4.669201609102991,
