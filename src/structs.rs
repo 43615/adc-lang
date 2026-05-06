@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::sync::{Arc, RwLock, mpsc::Sender, Mutex};
+use std::sync::{Arc, Barrier, RwLock, mpsc::Sender, Mutex, LazyLock};
 use std::sync::mpsc::Receiver;
 use std::thread::JoinHandle;
 use bitvec::prelude::*;
@@ -199,17 +199,44 @@ pub fn reg_index_nice(ri: &Rational) -> String {
 		})
 }
 
+/// Output of an ADC thread: Main stack of thread's state + interpreter result
 pub type ThreadResult = (Vec<Arc<Value>>, std::io::Result<ExecResult>);
+
+/// Rich handle for ADC threads, created and placed in a register by the interpreter. Dropping a handle by means other than [`Self::join`] will make the thread inaccessible.
+#[derive(Debug)]
+pub struct ThreadHandle {
+	pub(crate) fin: Arc<LazyLock<(), fn()>>,
+	pub(crate) ktx: Sender<()>,
+	pub(crate) jbar: Arc<Barrier>,
+	pub(crate) jh: JoinHandle<ThreadResult>
+}
+impl ThreadHandle {
+	/// Polls thread interpreter status, used by `J` command.
+	pub fn is_finished(&self) -> bool {
+		LazyLock::get(&*self.fin).is_some()
+	}
+
+	/// Terminates thread interpreter ASAP, propagates panic if disconnected. Kill signal is also received after interpreter is finished, for propagation upon [`Self::join`].
+	pub fn kill(&self) {
+		self.ktx.send(()).unwrap_or_else(|_| panic!("Thread panicked, terminating!"));
+	}
+
+	/// Blocks waiting for the thread to finish and returns its result, or propagates thread's panic. Killing and joining is recursively propagated to child threads.
+	pub fn join(self) -> ThreadResult {
+		self.jbar.wait();
+		self.jh.join().unwrap_or_else(|e| std::panic::resume_unwind(e))
+	}
+}
 
 #[derive(Default, Debug)]
 pub struct Register {
 	/// Stack of values, [`Arc`] to allow shallow copies
 	pub v: Vec<Arc<Value>>,
-	/// Thread handle with result values, kill signal, join signal. Sending or dropping the join signal is required before joining.
-	pub th: Option<(JoinHandle<ThreadResult>, Sender<()>, Sender<()>)>
+	/// Optional thread handle
+	pub th: Option<ThreadHandle>
 }
 impl Register {
-	/// Joins the thread handle, `kill = true` first sends a kill signal.
+	/// Joins the thread handle and saves its resulting values, `kill = true` first sends a kill signal.
 	///
 	/// Returns a message from any unhappy termination, same as the `j` command.
 	pub fn end_thread(&mut self, kill: bool) -> Option<String> {
@@ -217,35 +244,26 @@ impl Register {
 
 		let mut res = None;
 
-		if let Some((jh, ktx, jtx)) = self.th.take() {
-			if kill {
-				ktx.send(()).unwrap_or_else(|_| panic!("Thread panicked, terminating!"));
-			}
-			jtx.send(()).unwrap_or_else(|_| panic!("Thread panicked, terminating!"));
-			match jh.join() {
-				Ok(mut tr) => {
-					match tr.1 {
-						Err(e) => {
-							res = Some(format!("IO error in thread: {}", e));
-						},
-						Ok(SoftQuit(c)) if c != 0 => {
-							res = Some(format!("Thread quit with code {}", c));
-						},
-						Ok(HardQuit(c)) if c != 0 => {
-							res = Some(format!("Thread hard-quit with code {}", c));
-						},
-						Ok(Killed) => {
-							res = Some("Thread was killed".into());
-						},
-						_ => {}	//finished or quit with 0
-					}
-
-					self.v.append(&mut tr.0);
-				},
+		if let Some(th) = self.th.take() {
+			if kill { th.kill(); }
+			let (mut vals, th_res) = th.join();
+			match th_res {
 				Err(e) => {
-					std::panic::resume_unwind(e);
-				}
+					res = Some(format!("IO error in thread: {}", e));
+				},
+				Ok(SoftQuit(c)) if c != 0 => {
+					res = Some(format!("Thread quit with code {}", c));
+				},
+				Ok(HardQuit(c)) if c != 0 => {
+					res = Some(format!("Thread hard-quit with code {}", c));
+				},
+				Ok(Killed) => {
+					res = Some("Thread was killed".into());
+				},
+				_ => {}	//finished or quit with 0
 			}
+
+			self.v.append(&mut vals);
 		}
 		res
 	}
@@ -355,7 +373,15 @@ impl RegStore {
 		}
 	}
 
-	/// Joins all thread handles, `kill = true` first sends kill signals.
+	/// Indices of all registers with outstanding threads
+	pub fn list_threads(&self) -> Vec<Rational> {
+		#[allow(clippy::filter_map_bool_then)]	//not cleaner for tuple lambdas
+		self.low.iter().enumerate().filter_map(|(ri, reg)| reg.th.is_some().then(|| Rational::from(ri)))
+			.chain(self.high.iter().filter_map(|(ri, reg)| reg.th.is_some().then(|| ri.clone())))
+			.collect()
+	}
+
+	/// Joins all thread handles and saves their resulting values, `kill = true` first sends kill signals.
 	/// 
 	/// Returns messages from any unhappy terminations, same as the `j` command.
 	pub fn end_threads(&mut self, kill: bool) -> Vec<String> {
@@ -367,35 +393,28 @@ impl RegStore {
 			self.low.iter_mut().enumerate().map(|(ri, reg)| (reg_index_nice(&Rational::from(ri)), reg))
 				.chain(self.high.iter_mut().map(|(ri, reg)| (reg_index_nice(ri), reg)))
 		{
-			if let Some((jh, ktx, jtx)) = reg.th.take() {
+			if let Some(th) = reg.th.take() {
 				if kill {
-					ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
+					th.ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
 				}
-				jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
-				match jh.join() {
-					Ok(mut tr) => {
-						match tr.1 {
-							Err(e) => {
-								res.push(format!("IO error in thread {}: {}", ri_nice, e));
-							},
-							Ok(SoftQuit(c)) if c != 0 => {
-								res.push(format!("Thread {} quit with code {}", ri_nice, c));
-							},
-							Ok(HardQuit(c)) if c != 0 => {
-								res.push(format!("Thread {} hard-quit with code {}", ri_nice, c));
-							},
-							Ok(Killed) => {
-								res.push(format!("Thread {} was killed", ri_nice));
-							},
-							_ => {}	//finished or quit with 0
-						}
-						
-						reg.v.append(&mut tr.0);
-					},
+				let (mut vals, th_res) = th.join();
+				match th_res {
 					Err(e) => {
-						std::panic::resume_unwind(e);
-					}
+						res.push(format!("IO error in thread {}: {}", ri_nice, e));
+					},
+					Ok(SoftQuit(c)) if c != 0 => {
+						res.push(format!("Thread {} quit with code {}", ri_nice, c));
+					},
+					Ok(HardQuit(c)) if c != 0 => {
+						res.push(format!("Thread {} hard-quit with code {}", ri_nice, c));
+					},
+					Ok(Killed) => {
+						res.push(format!("Thread {} was killed", ri_nice));
+					},
+					_ => {}	//finished or quit with 0
 				}
+
+				reg.v.append(&mut vals);
 			}
 		}
 		res
@@ -546,6 +565,7 @@ impl Utf8Iter<'_> {
 
 				//continuation byte
 				0x80..=0xBF => {
+					std::hint::cold_path();
 					Err(ContAtStart(b0))
 				}
 
@@ -639,10 +659,14 @@ impl Utf8Iter<'_> {
 					}
 				}
 
-				0xC0 | 0xC1 | 0xF5..=0xFF => Err(Impossible(b0)),
+				0xC0 | 0xC1 | 0xF5..=0xFF => {
+					std::hint::cold_path();
+					Err(Impossible(b0))
+				}
 			}
 		}
-		else { 
+		else {
+			std::hint::cold_path();
 			Err(OutOfBounds(*pos, bytes.len()))
 		}
 	}

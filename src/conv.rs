@@ -1,4 +1,4 @@
-//! Nontrivial conversions and glue for foreign types
+//! Conversions of foreign types, some other boring stuff
 
 use std::cmp::Ordering;
 use malachite::{Natural, Integer, Rational};

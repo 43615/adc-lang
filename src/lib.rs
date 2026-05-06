@@ -23,13 +23,13 @@ use std::ops::Neg;
 use std::panic::catch_unwind;
 use std::ptr::NonNull;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
+use std::sync::{Arc, LazyLock, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
 use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{Factorial, NegAssign, Pow};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One, Two};
-use malachite::base::num::conversion::traits::{ConvertibleFrom, PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
+use malachite::base::num::conversion::traits::{PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
 use malachite::base::num::random::RandomPrimitiveInts;
 use malachite::base::rational_sequences::RationalSequence;
 use malachite::base::rounding_modes::RoundingMode;
@@ -364,20 +364,20 @@ pub unsafe fn interpreter(
 	macro_rules! synerr {
 		($c:expr, $s:expr) => {
 			if ll != LogLevel::Quiet {
-				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "! {th_name}{}: {}", $c, $s)?;
-				err.flush()?;
-				//drop lock
+				let mut lock = io.lock().unwrap();
+				writeln!(lock.2, "! {th_name}{}: {}", $c, $s)?;
+				lock.2.flush()?;
+				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
 		};
     	($c:expr, $f:literal, $($s:expr),*) => {
 			let s = format!($f, $($s),*);
 			if ll != LogLevel::Quiet {
-				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "! {th_name}{}: {}", $c, s)?;
-				err.flush()?;
-				//drop lock
+				let mut lock = io.lock().unwrap();
+				writeln!(lock.2, "! {th_name}{}: {}", $c, s)?;
+				lock.2.flush()?;
+				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, s));
 		};
@@ -386,20 +386,20 @@ pub unsafe fn interpreter(
 	macro_rules! valerr {
     	($c:expr, $s:expr) => {
 			if ll != LogLevel::Quiet {
-				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "? {th_name}{}: {}", $c, $s)?;
-				err.flush()?;
-				//drop lock
+				let mut lock = io.lock().unwrap();
+				writeln!(lock.2, "? {th_name}{}: {}", $c, $s)?;
+				lock.2.flush()?;
+				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
 		};
 		($c:expr, $f:literal, $($s:expr),*) => {
 			let s = format!($f, $($s),*);
 			if ll != LogLevel::Quiet {
-				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "? {th_name}{}: {}", $c, s)?;
-				err.flush()?;
-				//drop lock
+				let mut lock = io.lock().unwrap();
+				writeln!(lock.2, "? {th_name}{}: {}", $c, s)?;
+				lock.2.flush()?;
+				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, s));
 		};
@@ -408,27 +408,27 @@ pub unsafe fn interpreter(
 	macro_rules! debug {
     	($s:expr) => {
 			if ll == LogLevel::Debug {
-				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "\tDEBUG: {th_name}{}", $s)?;
-				err.flush()?;
-				//drop lock
+				let mut lock = io.lock().unwrap();
+				writeln!(lock.2, "\tDEBUG: {th_name}{}", $s)?;
+				lock.2.flush()?;
+				drop(lock);
 			}
 		};
 		($f:literal, $($s:expr),*) => {
 			if ll == LogLevel::Debug {
-				let err = &mut io.lock().unwrap().2;
-				writeln!(err, "\tDEBUG: {th_name}{}", format!($f, $($s),*))?;
-				err.flush()?;
-				//drop lock
+				let mut lock = io.lock().unwrap();
+				writeln!(lock.2, "\tDEBUG: {th_name}{}", format!($f, $($s),*))?;
+				lock.2.flush()?;
+				drop(lock);
 			}
 		};
 	}
 
-	let mut rptr: Option<Rational> = None;	//allow setting by a macro
+	let mut rptr: Option<Rational> = None;	//global scope to allow setting by a macro
 
 	let mut rng: Option<RandomPrimitiveInts<u64>> = None;
 
-	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::const_from(1))];
+	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::ONE)];
 
 	'mac: while let Some((mac, count)) = call.last_mut() {	//while call stack has contents, macro scope:
 		let mut alt = false;
@@ -713,11 +713,9 @@ pub unsafe fn interpreter(
 							}
 						},
 						b'?' => {	//read line
-							let res = {
-								let inp = &mut io.lock().unwrap().0;
-								inp.read_line()
-								//drop lock
-							};
+							let mut lock = io.lock().unwrap();
+							let res = lock.0.read_line();
+							drop(lock);
 							match res {
 								Ok(s) => {
 									push!(Value::S(s));
@@ -745,10 +743,10 @@ pub unsafe fn interpreter(
 									s.push('\n');
 								}
 								else {
-									let out = &mut io.lock().unwrap().1;
-									writeln!(out, "{}", vs)?;
-									out.flush()?;
-									//drop lock
+									let mut lock = io.lock().unwrap();
+									writeln!(lock.1, "{}", vs)?;
+									lock.1.flush()?;
+									drop(lock);
 								}
 							}
 							else {
@@ -762,10 +760,10 @@ pub unsafe fn interpreter(
 									s.push_str(&vs);
 								}
 								else {
-									let out = &mut io.lock().unwrap().1;
-									write!(out, "{}", vs)?;
-									out.flush()?;
-									//drop lock
+									let mut lock = io.lock().unwrap();
+									write!(lock.1, "{}", vs)?;
+									lock.1.flush()?;
+									drop(lock);
 								}
 							}
 							else {
@@ -954,9 +952,10 @@ pub unsafe fn interpreter(
 													s.push('\n');
 												}
 												else {
-													let out = &mut io.lock().unwrap().1;
-													writeln!(out, "{}", vs)?;
-													out.flush()?;
+													let mut lock = io.lock().unwrap();
+													writeln!(lock.1, "{}", vs)?;
+													lock.1.flush()?;
+													drop(lock);
 												}
 											}
 										},
@@ -1001,8 +1000,7 @@ pub unsafe fn interpreter(
 												Ok(Integer::NEGATIVE_ONE) => {	//return to os seed (lazy init)
 													rng = None;
 												},
-												Ok(i) if Natural::convertible_from(&i) => {	//custom seed
-													let n= unsafe { Natural::try_from(i).unwrap_unchecked() };	//SAFETY: just checked
+												Ok(i) if let Ok(n) = Natural::try_from(&i) => {	//custom seed
 													let mut bytes: Vec<u8> = PowerOf2DigitIterable::<u8>::power_of_2_digits(&n, 8).take(32).collect();
 													bytes.resize(32, 0);
 													rng = Some(rng_preset(
@@ -1131,6 +1129,9 @@ pub unsafe fn interpreter(
 									for s in st.regs.end_threads(true) {
 										valerr!('j', s);
 									}
+								},
+								b"thlist" => {
+									push!(Value::A(st.regs.list_threads().into_iter().map(Value::N).collect()));
 								},
 								b"trim" => {
 									st.trim();
@@ -1281,7 +1282,10 @@ pub unsafe fn interpreter(
 								if let Value::S(sa) = &*va {
 									let th_start = sa.to_owned().into();
 									let (ktx, krx) = std::sync::mpsc::channel::<()>();
-									let (jtx, jrx) = std::sync::mpsc::channel::<()>();
+									let fin: Arc<LazyLock<_>> = Arc::new(LazyLock::new(|| ()));
+									let th_fin = Arc::clone(&fin);
+									let jbar = Arc::new(std::sync::Barrier::new(2));
+									let th_jbar = Arc::clone(&jbar);
 									let tb = std::thread::Builder::new().name(format!("{th_name}{}: ", reg_index_nice(&ri)));
 									let mut th_st = if alt { st.clone() } else { State::default() };
 									let th_io = Arc::clone(&io);
@@ -1289,12 +1293,13 @@ pub unsafe fn interpreter(
 									match tb.spawn(move || {
 										////////////////////////////////
 										let th_res = unsafe { interpreter(&mut th_st, th_start, th_io, ll, Some(&krx), restrict) };
-
-										let _ = jrx.recv();	//wait for join signal
-										th_st.regs.end_threads(	//join children
-											th_res.is_err()	//kill on io error
+										LazyLock::force(&th_fin);	//latch finished state
+										
+										th_jbar.wait();	//wait for join intent from parent
+										th_st.regs.end_threads(	//propagate to children
+											th_res.is_err()	//also kill on io error
 											||
-											match krx.try_recv() {	//check for unprocessed kill signal
+											match krx.try_recv() {	//check if kill signal arrived after finishing
 												Ok(()) => { true },
 												Err(TryRecvError::Empty) => { false },
 												Err(TryRecvError::Disconnected) => { unreachable!() }	//parent should never disconnect
@@ -1305,7 +1310,7 @@ pub unsafe fn interpreter(
 										////////////////////////////////
 									}) {
 										Ok(jh) => {
-											st.regs.get_mut(&ri).th = Some((jh, ktx, jtx));
+											st.regs.get_mut(&ri).th = Some(ThreadHandle{fin, ktx, jbar, jh});
 										},
 										Err(e) => {
 											st.mstk.push(va);
@@ -1325,46 +1330,39 @@ pub unsafe fn interpreter(
 						},
 						b'j' => {
 							let ri_nice = reg_index_nice(&ri);
-							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some((jh, ktx, jtx)) = reg.th.take() {
+							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some(th) = reg.th.take() {
 								if alt {
-									ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
+									th.ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
 								}
-								jtx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
-								match jh.join() {
-									Ok(mut tr) => {
-										match tr.1 {
-											Err(e) => {
-												let s = format!("IO error in thread {}: {}", ri_nice, e);
-												eprintln!("? {th_name}j: {}", s);	//io.2 might be unusable, fall back to fresh stderr
-												elatch = Some((Natural::ZERO, 'j', s));
-											},
-											Ok(SoftQuit(c)) if c != 0 => {
-												valerr!('j', "Thread {} quit with code {}", ri_nice, c);
-											},
-											Ok(HardQuit(c)) if c != 0 => {
-												valerr!('j', "Thread {} hard-quit with code {}", ri_nice, c);
-											},
-											Ok(Killed) => {
-												valerr!('j', "Thread {} was killed", ri_nice);
-											},
-											_ => {}	//finished or quit with 0
-										}
-
-										reg.v.append(&mut tr.0);
-									},
+								let (mut vals, th_res) = th.join();
+								match th_res {
 									Err(e) => {
-										std::panic::resume_unwind(e);
-									}
+										let s = format!("IO error in thread {}: {}", ri_nice, e);
+										eprintln!("? {th_name}j: {}", s);	//io.2 might be unusable, fall back to fresh stderr
+										elatch = Some((Natural::ZERO, 'j', s));
+									},
+									Ok(SoftQuit(c)) if c != 0 => {
+										valerr!('j', "Thread {} quit with code {}", ri_nice, c);
+									},
+									Ok(HardQuit(c)) if c != 0 => {
+										valerr!('j', "Thread {} hard-quit with code {}", ri_nice, c);
+									},
+									Ok(Killed) => {
+										valerr!('j', "Thread {} was killed", ri_nice);
+									},
+									_ => {}	//finished or quit with 0
 								}
+
+								reg.v.append(&mut vals);
 							}
 							else {
 								valerr!('j', "Register {} is not running a thread", ri_nice);
 							}
 						},
 						b'J' => {
-							if let Some(Some((jh, _, _))) = st.regs.try_get(&ri).map(|reg| &reg.th) {
+							if let Some(th) = st.regs.try_get(&ri).and_then(|reg| reg.th.as_ref()) {
 								let mut bz = BitVec::new();
-								bz.push(jh.is_finished());
+								bz.push(th.is_finished());
 								push!(Value::B(bz));
 							}
 							else {

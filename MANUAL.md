@@ -85,16 +85,16 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 - For the above printing commands, prefixing `` ` `` will print `[brackets]` around strings.
 - `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
 - `_clhist` clears the input history. Does nothing if no history is implemented.
-- **CLI:** uses the IO streams of the process, input uses an additional [line editor](https://crates.io/crates/linefeed) when running interactively in a supported terminal. The library may be attached to other streams using a generic interface.
+- **CLI:** uses the IO streams of the process, input uses an additional [line editor ⎋](https://crates.io/crates/linefeed) when running interactively in a supported terminal. The library may be attached to other streams using a generic `std::io` interface.
 
 
 # Numbers
 
-This ADC interpreter uses the highly performant [Malachite](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base >=2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
+This ADC interpreter uses the highly performant [Malachite ⎋](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base >=2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
 
-Some of the available arithmetic functions are irrational-valued, which necessitates usage of floating-point arithmetic to achieve practical performance on real computers. This places hard limits on the range and precision of the arguments and results of these functions. Infinite and NaN results are not representable as rationals and will cause an error. As mentioned [above](#type-annotations-and-restricted-types), such numbers are annotated as `NF`. This interpreter uses 64-bit ("double precision") numbers as defined by IEEE 754-2008 "binary64", which are natively supported by all CPUs worth using (citation needed).
+Some of the available arithmetic functions are irrational-valued, implemented here using double-precision floating-point arithmetic (IEEE 754-2008 "binary64"). This places hard limits on the range and precision of the arguments and results of these functions. ±∞ and NaN results are not representable as rationals and will cause an error. As mentioned [above](#type-annotations-and-restricted-types), floating-point arguments and results are annotated as `NF`. Floating-point results are converted to the simplest rational in rounding range, as documented [here ⎋](https://docs.rs/malachite/latest/malachite/struct.Rational.html#method.try_from_float_simplest).
 
-Some functions also have "integer" variants that aren't bound by these limits, but place further restrictions on the arguments. They are automatically selected instead of the floating-point variant whenever possible, as such results are always preferable.
+Some of these irrational functions have rational/integer results for a subset of arguments. The interpreter attempts to perform these closed variants first, falling back to the floating-point variant if no result is computable using rationals.
 
 
 ## Number I/O
@@ -123,12 +123,12 @@ These are equally correct ways of expressing a number, as inputting them back wo
 
 ## Factoradic numbers
 
-ADC also supports the [factorial/factoradic number system](https://en.wikipedia.org/wiki/Factorial_number_system), accessible as "base 1".
+ADC also supports the [factorial/factoradic number system ⎋](https://en.wikipedia.org/wiki/Factorial_number_system), accessible as "base 1".
 - Since the digits can be arbitrarily large, factoradic numbers use the same `'enclosed'` format as bases above 36.
 - Although factoradic representations are not canonically defined or used for negative values, ADC allows negation of the whole number with the usual `` ` ``.
 - The place values are extended to fractionals in the canonical manner. Redundant places (0!, 1/0!, 1/1!) are omitted. The resulting place values are `... 120 24 6 2 1.1/2 1/6 1/24 1/120 ...`, and the highest possible digits are `... 5 4 3 2 1.1 2 3 4 ...`.
-- Since all rational numbers have a finite factoradic representation, no recurring digits are ever output or accepted in input (nonzero recurring digits would result in irrationals).
-- The scientific and fractional output modes are not really useful for working with factoradics. They are not used in automatic mode, but may still be selected manually. In particular, scientific notation doesn't correspond to a simple factor but instead to displacement of the significand.
+- Since all rational numbers have a finite factoradic representation, no recurring digits are ever output or accepted in input (computing the value of nonzero recurring digits wouldn't terminate, approaching irrationals).
+- The scientific and fractional output modes are not really useful for working with factoradics. They are not used in automatic mode, but may still be selected manually. Scientific notation displaces the significand, which doesn't correspond do a simple multiplication/division for factoradics.
 - As with bases above 36, numbers without apostrophes are interpreted as decimal.
 
 
@@ -136,7 +136,7 @@ ADC also supports the [factorial/factoradic number system](https://en.wikipedia.
 
 These are the options for controlling number I/O operations:
 - `NPa k` sets the output precision. This limits the amount of displayed significant digits, with no effect on calculations. The default value of 0 means no limit.
-  - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
+  - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases ⎋](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
   - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater. This may give surprisingly incorrect results.
 - `K → NPz` returns the current output precision.
@@ -185,9 +185,9 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `gamma`: Euler-Mascheroni constant (γ)
   - `delta`: First Feigenbaum constant (δ)
   - `alpha`: Second Feigenbaum constant (α)
-  - `epsilon`: [Machine epsilon](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats. 1+ε is the next representable float after 1.
+  - `epsilon`: [Machine epsilon ⎋](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats. 1+ε is the next representable float after 1.
   - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
-- `NNa N → NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance.
+- `NNa N → NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
 - `NFa NZb t → NFz`: Monadic trigonometric/hyperbolic functions of *a* (angles in radians), selected by *b*:
   - `1`: sine
@@ -250,7 +250,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa NPb / → Sz` truncates *a* to *b* characters. No effect if *b* exceeds the length.
 - `Sa ! → Sz` inverts the case of all characters in *a*.
 - `Sa Sb ^ → NZz` finds the first occurrence of *b* in *a* and returns its position, `` `1 `` if not found.
-  - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here](https://docs.rs/regex/latest/regex/index.html#syntax), ensure that backslashes are escaped correctly.
+  - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here ⎋](https://docs.rs/regex/latest/regex/index.html#syntax), ensure that backslashes are escaped correctly.
 - `Sa v → Sz` reverses *a*.
 - `Sa g → NPz`: length of *a*.
   - `` Sa `g → NPz ``: byte length of *a*.
@@ -259,7 +259,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa NPb % → SCz`: *b*th character of *a*.
 - `Sa NPb ~ → (Sy Sz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
 - `Sa Sb Sc | → Sz` replaces all occurrences of *b* in *a* with *c*. Empty *b* is found everywhere.
-  - `` Sa Sb Sc `| → Sz `` replaces all matches of regex *b* in *a* with *c*. Replacement string syntax is documented [here](https://docs.rs/regex/latest/regex/struct.Regex.html#replacement-string-syntax).
+  - `` Sa Sb Sc `| → Sz `` replaces all matches of regex *b* in *a* with *c*. Replacement string syntax is documented [here ⎋](https://docs.rs/regex/latest/regex/struct.Regex.html#replacement-string-syntax).
 - `Sa Sb < → BBz` / `Sa Sb = → BBz` / `Sa Sb > → BBz`: comparisons of strings. Per-character comparison if lengths are equal, length comparison otherwise ("shortlex").
 
 
@@ -345,9 +345,11 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `` `j⒭ `` kills the thread and also pushes the main stack to the register. The kill signal is checked before executing any new command.
 - `_joinall` and `_killall` perform the above commands for all current child threads.
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
+- `_thlist → ANz` returns the indices of all registers with outstanding child threads.
 - Joining and killing is propagated to grandchild threads, zombie threads are impossible under normal circumstances.
 - Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
 - The [IO streams](#input-and-output) and the ability to execute [OS commands](#os-commands) are shared between all threads using mutexes. Competing threads are blocked until the currently occupying thread is finished. Busy and blocked threads are unable to receive their kill signal until they are unblocked and move on to the next command.
+  - Note that waiting for input from `?` (or **CLI:** interactive mode) blocks concurrent output from other threads. In that case, it is recommended to break up busy loops with short delays (`w`, below).
 
 
 # Other commands
@@ -373,9 +375,9 @@ Most strings involved here are not guaranteed to be valid UTF-8, particularly on
 
 ## Environment access
 
-- `_osarch → Sz` returns the [CPU architecture](https://doc.rust-lang.org/std/env/consts/constant.ARCH.html) of the running system.
-- `_osfamily → Sz` returns the [OS family](https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html) of the running system.
-- `_osname → Sz` returns the [OS name](https://doc.rust-lang.org/std/env/consts/constant.OS.html) of the running system.
+- `_osarch → Sz` returns the [CPU architecture ⎋](https://doc.rust-lang.org/std/env/consts/constant.ARCH.html) of the running system.
+- `_osfamily → Sz` returns the [OS family ⎋](https://doc.rust-lang.org/std/env/consts/constant.FAMILY.html) of the running system.
+- `_osname → Sz` returns the [OS name ⎋](https://doc.rust-lang.org/std/env/consts/constant.OS.html) of the running system.
 - `_pid → NNz` returns the process ID of the interpreter.
 - `Sa Sb _setvar` sets the environment variable *a* to the value *b*, clearing it if empty.
 - `Sa _getvar → Sz` reads the environment variable *a*, empty string if unset.
