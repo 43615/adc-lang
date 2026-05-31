@@ -23,7 +23,7 @@ use std::ops::Neg;
 use std::panic::catch_unwind;
 use std::ptr::NonNull;
 use std::str::FromStr;
-use std::sync::{Arc, LazyLock, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
+use std::sync::{Arc, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
 use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
@@ -212,7 +212,7 @@ const CMDS: [Command; 128] = {
 	]
 };
 
-fn byte_cmd(b: u8) -> Command {
+#[inline(always)] fn byte_cmd(b: u8) -> Command {
 	CMDS.get(b as usize).copied().unwrap_or_default()
 }
 
@@ -227,7 +227,7 @@ fn string_or_bytes(v: &[u8]) -> String {
 	})
 }
 
-const fn upper_hex_to_nibble(b: u8) -> Option<u8> {
+#[inline(always)] const fn upper_hex_to_nibble(b: u8) -> Option<u8> {
 	match b {
 		b'0'..=b'9' => Some(unsafe{b.unchecked_sub(0x30)}),	//SAFETY: underflow is impossible
 		b'A'..=b'F' => Some(unsafe{b.unchecked_sub(0x37)}),
@@ -235,7 +235,7 @@ const fn upper_hex_to_nibble(b: u8) -> Option<u8> {
 	}
 }
 
-const fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
+#[inline(always)] const fn mixed_ascii_to_digit(b: u8) -> Option<u8> {
 	match b {
 		b'0'..=b'9' => Some(unsafe{b.unchecked_sub(0x30)}),	//SAFETY: underflow is impossible
 		b'A'..=b'Z' => Some(unsafe{b.unchecked_sub(0x37)}),
@@ -261,10 +261,10 @@ pub enum LogLevel {
 	/// All commands completed
 	Finished,
 
-	/// `q` command (early exit from current set of commands)
+	/// `q` command + exit code (early exit from current set of commands)
 	SoftQuit(u8),
 
-	/// `` `q `` command (early exit from entire interpreter, if applicable)
+	/// `` `q `` command + exit code (early exit from entire interpreter, if applicable)
 	HardQuit(u8),
 
 	/// Received kill signal while executing commands
@@ -322,11 +322,11 @@ pub unsafe fn interpreter_no_io(
 /// - `st`: State struct to work on, modified in-place
 /// - `start`: Initial commands to run
 /// - `io`: Bundle of IO stream handles
-///   - `io.0`: Input, read by ? one line at a time
+///   - `io.0`: Input, read by `?` one line at a time
 ///   - `io.1`: Output, written to by printing commands
 ///   - `io.2`: Error messages, one per line
 /// - `ll`: Level of verbosity for `io.2`
-/// - `kill`: Optional kill signal, receiving `()` terminates the interpreter immediately (except when blocked due to an OS command).
+/// - `kill`: Optional kill signal, receiving `()` terminates the interpreter as soon as it parses its next command.
 /// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
 /// # Errors
@@ -335,7 +335,7 @@ pub unsafe fn interpreter_no_io(
 /// This will result in an incomplete, although internally consistent, [`State`]. Keep that possibility to a minimum when preparing custom [`IOStreams`].
 ///
 /// # Safety
-/// If built without the `no_os` feature (as is the default), passing `restrict = false` enables OS interactions from within the language. This function is marked unsafe to act as a speedbump.
+/// If built without the `no_os` feature (as is the default), passing `restrict = false` enables OS interactions from within the language. This function is marked unsafe as a speedbump.
 ///
 /// When working with untrusted input and/or OS features are not desired, [`interpreter_no_os`] and [`interpreter_simple`] provide safe wrappers.
 pub unsafe fn interpreter(
@@ -578,7 +578,7 @@ pub unsafe fn interpreter(
 					}
 				},
 				Cmd(cmd) => {
-					debug!("Impure command {}", b as char);
+					debug!("Command {}", b as char);
 					match cmd(st) {
 						Ok(mut v) => {
 							append!(v);
@@ -637,7 +637,7 @@ pub unsafe fn interpreter(
 								}
 							}
 							else {
-								synerr!('d', "Stack is empty");
+								valerr!('d', "Stack is empty");
 							}
 						},
 						b'D' => {
@@ -808,11 +808,16 @@ pub unsafe fn interpreter(
 											st.mstk.push(sec);
 										}
 
-										if mac.is_finished() && *count == Natural::ZERO {	//tail call optimization: discard current macro if finished
+										if mac.is_finished() && *count == Natural::ONE {	//tail call optimization: discard current macro if this is the last command
 											call.pop();
 										}
 
 										call.extend(stk.into_iter().rev());
+
+										if !dest.is_empty() {	//flush array buffer if not completed
+											st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
+											dest.clear();	//SAFETY: remove leftover dangling references
+										}
 										continue 'mac;
 									},
 									Err(e) => {
@@ -841,6 +846,7 @@ pub unsafe fn interpreter(
 									Value::N(r) => {
 										if let Ok(u) = usize::try_from(r) {
 											call.truncate(call.len().saturating_sub(u));
+
 											if !dest.is_empty() {	//flush array buffer if not completed
 												st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
 												dest.clear();	//SAFETY: remove leftover dangling references
@@ -934,7 +940,7 @@ pub unsafe fn interpreter(
 													match mac.try_next_char() {
 														Ok(c) => {c as u32},
 														Err(e) => {
-															*count = Natural::ZERO;
+															*count = Natural::ONE;
 															synerr!('\0', "Aborting invalid macro: {}", e);
 															break 'cmd;
 														}
@@ -1208,7 +1214,7 @@ pub unsafe fn interpreter(
 							match mac.try_next_char() {
 								Ok(c) => {c as u32},
 								Err(e) => {
-									*count = Natural::ZERO;
+									*count = Natural::ONE;
 									synerr!('\0', "Aborting invalid macro: {}", e);
 									break 'cmd;
 								}
@@ -1256,7 +1262,7 @@ pub unsafe fn interpreter(
 								}
 							}
 							else {
-								synerr!('l', "Register {} is empty", reg_index_nice(&ri));
+								synerr!('l', "Register {} is empty", reg_index_pretty(&ri));
 							}
 						},
 						b'L' => {
@@ -1271,46 +1277,20 @@ pub unsafe fn interpreter(
 								}
 							}
 							else {
-								synerr!('L', "Register {} is empty", reg_index_nice(&ri));
+								synerr!('L', "Register {} is empty", reg_index_pretty(&ri));
 							}
 						},
 						b'X' => {
 							if let Some(true) = st.regs.try_get(&ri).map(|reg| reg.th.is_some()) {
-								valerr!('X', "Register {} is already running a thread", reg_index_nice(&ri));
+								valerr!('X', "Register {} is already running a thread", reg_index_pretty(&ri));
 							}
 							else if let Some(va) = st.mstk.pop() {
 								if let Value::S(sa) = &*va {
-									let th_start = sa.to_owned().into();
-									let (ktx, krx) = std::sync::mpsc::channel::<()>();
-									let fin: Arc<LazyLock<_>> = Arc::new(LazyLock::new(|| ()));
-									let th_fin = Arc::clone(&fin);
-									let jbar = Arc::new(std::sync::Barrier::new(2));
-									let th_jbar = Arc::clone(&jbar);
-									let tb = std::thread::Builder::new().name(format!("{th_name}{}: ", reg_index_nice(&ri)));
-									let mut th_st = if alt { st.clone() } else { State::default() };
-									let th_io = Arc::clone(&io);
-
-									match tb.spawn(move || {
-										////////////////////////////////
-										let th_res = unsafe { interpreter(&mut th_st, th_start, th_io, ll, Some(&krx), restrict) };
-										LazyLock::force(&th_fin);	//latch finished state
-										
-										th_jbar.wait();	//wait for join intent from parent
-										th_st.regs.end_threads(	//propagate to children
-											th_res.is_err()	//also kill on io error
-											||
-											match krx.try_recv() {	//check if kill signal arrived after finishing
-												Ok(()) => { true },
-												Err(TryRecvError::Empty) => { false },
-												Err(TryRecvError::Disconnected) => { unreachable!() }	//parent should never disconnect
-											}
-										);
-
-										(th_st.mstk, th_res)
-										////////////////////////////////
-									}) {
-										Ok(jh) => {
-											st.regs.get_mut(&ri).th = Some(ThreadHandle{fin, ktx, jbar, jh});
+									let name = format!("{th_name}{}: ", reg_index_pretty(&ri));
+									let th_st = if alt {st.clone()} else {State::default()};
+									match ThreadHandle::spawn(&name, th_st, sa.to_owned(), Arc::clone(&io), ll, restrict) {
+										Ok(th) => {
+											st.regs.get_mut(&ri).th = Some(th);
 										},
 										Err(e) => {
 											st.mstk.push(va);
@@ -1329,11 +1309,9 @@ pub unsafe fn interpreter(
 							}
 						},
 						b'j' => {
-							let ri_nice = reg_index_nice(&ri);
+							let ri_nice = reg_index_pretty(&ri);
 							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some(th) = reg.th.take() {
-								if alt {
-									th.ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
-								}
+								if alt {th.kill();}
 								let (mut vals, th_res) = th.join();
 								match th_res {
 									Err(e) => {
@@ -1366,7 +1344,7 @@ pub unsafe fn interpreter(
 								push!(Value::B(bz));
 							}
 							else {
-								valerr!('J', "Register {} is not running a thread", reg_index_nice(&ri));
+								valerr!('J', "Register {} is not running a thread", reg_index_pretty(&ri));
 							}
 						},
 						_ => unreachable!()
@@ -1776,7 +1754,7 @@ pub unsafe fn interpreter(
 															discard = true;
 														},
 														Err(e) => {
-															*count = Natural::ZERO;
+															*count = Natural::ONE;
 															synerr!('\0', "Aborting invalid macro: {}", e);
 															break 'cmd;
 														}
@@ -1822,7 +1800,7 @@ pub unsafe fn interpreter(
 							synerr!(c, "Invalid command: {} (U+{:04X})", c, c as u32);
 						},
 						Err(e) => {
-							*count = Natural::ZERO;
+							*count = Natural::ONE;
 							synerr!('\0', "Aborting invalid macro: {}", e);
 							break 'cmd;
 						}

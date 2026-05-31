@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::sync::{Arc, Barrier, RwLock, mpsc::Sender, Mutex, LazyLock};
-use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Barrier, Mutex, Once, RwLock};
+use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
@@ -188,32 +188,70 @@ impl Display for Value {
 }
 
 /// Tries to convert register index ([`Rational`]) to a string if it was likely set from one, or displays the number with automatic format
-pub fn reg_index_nice(ri: &Rational) -> String {
+pub fn reg_index_pretty(ri: &Rational) -> String {
 	use malachite::base::num::conversion::traits::PowerOf2Digits;
 	Natural::try_from(ri).ok().and_then(|n| {	//if ri is a natural
 		let bytes: Vec<u8> = n.to_power_of_2_digits_desc(8);	//look at its bytes
 		str::from_utf8(&bytes).ok().map(|s| String::from("[") + s + "]")	//if it parses to a string, ri was likely set from one
 	})
-		.unwrap_or_else(|| {
-			crate::num::nauto(ri, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)	//or just return the number in canonical notation
-		})
+	.unwrap_or_else(|| {
+		crate::num::nauto(ri, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)	//or just return the number in canonical notation
+	})
 }
 
 /// Output of an ADC thread: Main stack of thread's state + interpreter result
 pub type ThreadResult = (Vec<Arc<Value>>, std::io::Result<ExecResult>);
 
-/// Rich handle for ADC threads, created and placed in a register by the interpreter. Dropping a handle by means other than [`Self::join`] will make the thread inaccessible.
+/// Rich handle for ADC threads, usually created and placed in a register by the interpreter.
+///
+/// Extends [Rust's std threads](std::thread) with a kill signal and appropriate propagation of joins/kills to grandchildren. As such, dropping a handle by means other than [`Self::join`] will make the thread inaccessible.
 #[derive(Debug)]
 pub struct ThreadHandle {
-	pub(crate) fin: Arc<LazyLock<(), fn()>>,
-	pub(crate) ktx: Sender<()>,
-	pub(crate) jbar: Arc<Barrier>,
-	pub(crate) jh: JoinHandle<ThreadResult>
+	fin: Arc<Once>,
+	ktx: Sender<()>,
+	jbar: Arc<Barrier>,
+	jh: JoinHandle<ThreadResult>
 }
 impl ThreadHandle {
+	/// Spawns a new interpreter thread, used by `X` command. Thread has an unbounded lifetime (`'static`) and may only be controlled using the returned handle.
+	///
+	/// Arguments are similar to the [main interpreter](crate::interpreter), but taken by value since the thread must own them.
+	///
+	/// `name` sets the thread's name, which is visible at the OS level [where supported](std::thread#naming-threads) and shown in ADC error messages.
+	/// Within ADC, the `X` command sets this to a [canonical pretty-print](reg_index_pretty) of the handle register's index.
+	/// Any NUL bytes in `name` are removed to avoid OS errors.
+	pub fn spawn(name: &str, mut st: State, start: String, io: Arc<Mutex<IOStreams>>, ll: LogLevel, restrict: bool) -> std::io::Result<Self> {
+		let (ktx, krx) = std::sync::mpsc::channel::<()>();
+		let fin = Arc::new(Once::new());
+		let th_fin = Arc::clone(&fin);
+		let jbar = Arc::new(Barrier::new(2));
+		let th_jbar = Arc::clone(&jbar);
+		let tb = std::thread::Builder::new().name(name.replace('\0', ""));
+		tb.spawn(move || {
+			////////////////////////////////
+			let th_res = unsafe { crate::interpreter(&mut st, start.into(), io, ll, Some(&krx), restrict) };
+			th_fin.call_once(||());	//latch finished state
+
+			th_jbar.wait();	//wait for join intent from parent
+			st.regs.end_threads(	//propagate to children
+			th_res.is_err()	//also kill on io error
+				||
+				match krx.try_recv() {	//check if kill signal arrived after finishing
+					Ok(()) => { true },
+					Err(TryRecvError::Empty) => { false },
+					Err(TryRecvError::Disconnected) => { unreachable!() }	//parent should never disconnect
+				}
+			);
+
+			(st.mstk, th_res)
+			////////////////////////////////
+		})
+		.map(|jh| Self{fin, ktx, jbar, jh})
+	}
+
 	/// Polls thread interpreter status, used by `J` command.
 	pub fn is_finished(&self) -> bool {
-		LazyLock::get(&*self.fin).is_some()
+		self.fin.is_completed()
 	}
 
 	/// Terminates thread interpreter ASAP, propagates panic if disconnected. Kill signal is also received after interpreter is finished, for propagation upon [`Self::join`].
@@ -390,13 +428,11 @@ impl RegStore {
 		let mut res = Vec::new();
 		
 		for (ri_nice, reg) in
-			self.low.iter_mut().enumerate().map(|(ri, reg)| (reg_index_nice(&Rational::from(ri)), reg))
-				.chain(self.high.iter_mut().map(|(ri, reg)| (reg_index_nice(ri), reg)))
+			self.low.iter_mut().enumerate().map(|(ri, reg)| (reg_index_pretty(&Rational::from(ri)), reg))
+				.chain(self.high.iter_mut().map(|(ri, reg)| (reg_index_pretty(ri), reg)))
 		{
 			if let Some(th) = reg.th.take() {
-				if kill {
-					th.ktx.send(()).unwrap_or_else(|_| panic!("Thread {} panicked, terminating!", ri_nice));
-				}
+				if kill {th.kill();}
 				let (mut vals, th_res) = th.join();
 				match th_res {
 					Err(e) => {

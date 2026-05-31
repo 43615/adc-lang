@@ -201,9 +201,9 @@ pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<N
 }
 
 ///digit to character byte: 0-9a-z
-fn chr(d: &Natural) -> u8 {
+#[inline(always)] fn chr(d: &Natural) -> u8 {
 	let u = u8::wrapping_from(d);
-	if u < 10 { u + 48 } else { u + 87 }
+	if u < 10 { u + 0x30 } else { u + 0x57 }
 }
 
 ///normal notation from digits

@@ -279,7 +279,7 @@ Essential commands for interacting with values already on the stack, or the stac
 
 # Array polymorphism
 
-Arrays are ordered, contiguous lists of values with arbitrary length. Due to the fact that the contained values can themselves be arrays, their dimensionality is unlimited. In ADC, arrays are written `(with parentheses)`. Here's an example of inputting a 2-dimensional array:
+Arrays are ordered, contiguous lists of values with arbitrary length. Due to the fact that the contained values can be arrays themselves, their dimensionality is unlimited. In ADC, arrays are written `(with parentheses)`. Here's an example of inputting a 2-dimensional array:
 ```
 ((1 2) (3 4) (5 6))
 ```
@@ -292,21 +292,19 @@ Arrays can contain arbitrary combinations of value types as well as have arbitra
 The crucial feature that makes ADC an array language is that functions can be applied to every element of an array without having to explicitly use iteration:
 `(1 2 3) (4 5 6) *` results in `(4 10 18)`, an additional `2/` results in `(2 5 9)`.
 
-This implicit application of operations is limited to the pure arithmetic functions (although composition by concatenation is possible). The traversal procedure is as follows:
-- For monadics, the function is simply applied to every element, preserving their locations in nested arrays.
-- For dyadics and triadics, the resulting nested layout will have the highest dimension of all arguments:
-  - Traverse array(s), for each element:
-  - If the 2 or 3 arguments at the current position are only scalars, compute the function.
-  - If at least one is an array, promote any scalars to arrays of correct length and recurse. Examples:
-    - `(1 2 3) 4 +` and `(1 2 3) (4 4 4) +` are equivalent (`(5 6 7)`).
-    - `(1 (2 3 4)) ((5 6 7) 8) +` and `((1 1 1) (2 3 4)) ((5 6 7) (8 8 8)) +` are equivalent (`((6 7 8) (10 11 12))`).
-  - If there are multiple arrays of unequal length, abort the process.
-- In this implementation, the "recursion" is implemented using an iterative algorithm in heap memory and the "promotion" does not actually allocate a new array. This avoids stack overflow issues on real systems and utilizes a practical minimum amount of memory (tested with recursion depths in the millions). Other interpreter implementations should employ similar algorithms if possible.
+This implicit application of operations is limited to the pure arithmetic functions (with trivial composition by concatenation). For monadics, the function is simply applied to every element, preserving their locations in nested arrays. For dyadics and triadics, arrays are matched against each other element-wise, which requires them to have the same length. A non-array element matched against an array element will be implicitly promoted to an array of that length. Examples:
+  - `(1 2 3) 4 +` and `(1 2 3) (4 4 4) +` both result in `(5 6 7)`.
+  - `(1 (2 3 4)) ((5 6 7) 8) +` and `((1 1 1) (2 3 4)) ((5 6 7) (8 8 8)) +` both result in `((6 7 8) (10 11 12))`.
+  - `(1 2 3) (4 5) +` causes a length error.
+
+In this implementation, all internal array functions use heap-based algorithms instead of recursive calls, resulting in a practically unlimited nesting depth.
 
 
 # Array operations and indexing
 
-Array input works by shadowing the main stack with a temporary buffer, and pushing any newly created values to that instead. This does not apply to values that are returned because of [errors](#errors).
+Array input works by pushing any newly created values to a buffer instead of the stack. This does not apply to values that are returned to the stack upon [errors](#errors).
+
+The scope of array input is limited to macro boundaries. The end of a macro implies sufficient closing `)`s.
 
 
 # Registers
@@ -345,7 +343,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `` `j⒭ `` kills the thread and also pushes the main stack to the register. The kill signal is checked before executing any new command.
 - `_joinall` and `_killall` perform the above commands for all current child threads.
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
-- `_thlist → ANz` returns the indices of all registers with outstanding child threads.
+- `_thlist → (Nz)` returns the indices of all registers with outstanding child threads.
 - Joining and killing is propagated to grandchild threads, zombie threads are impossible under normal circumstances.
 - Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
 - The [IO streams](#input-and-output) and the ability to execute [OS commands](#os-commands) are shared between all threads using mutexes. Competing threads are blocked until the currently occupying thread is finished. Busy and blocked threads are unable to receive their kill signal until they are unblocked and move on to the next command.
