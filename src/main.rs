@@ -7,49 +7,59 @@ use std::sync::{Arc, Mutex};
 use adc_lang::*;
 use adc_lang::structs::{State, Utf8Iter};
 
-const HELP: &str = r#"
-ADC: Array-oriented reimagining of dc, a terse RPN esolang
-	Terminal-based wrapper executable
+const HELP: &str = "\
+ADC: Array-oriented reimagining of dc, a terse RPN esolang (built-in executable CLI wrapper)
 
 Full documentation and source code: https://github.com/43615/adc-lang
 
+----------------------
 COMMAND LINE ARGUMENTS
 ----------------------
-Long and short flags are interchangeable. Short flags may not be concatenated: `-ie` is read as `-i e`, not `-i -e`.
+Long and short flags are interchangeable. Short flags may not be merged: `-ie` is read as `-i e`, not `-i -e`.
 
+	------------
 	INSTRUCTIONS
 	------------
 	`-i|--inter <prompt>?` starts a looping interactive session. May use a custom prompt, the default is `> `.
-		This is the default if no instructions are given. ^C ends the session, ^D runs an empty string.
+		^C ends the session, ^D runs an empty string.
 	`-e|--exec <macro>*` executes the argument(s) directly as a sequence of ADC commands.
-		Ensure that characters with special uses in your shell's syntax are ignored/escaped properly.
+		Ensure that any special characters in your shell are properly escaped.
 	`-f|--file <path>*` executes the specified file(s) as a script, without creating or modifying it.
-		If non-flag arguments are given (like `$ adc foo bar`), this is implied.
-	Multiple of these can be used together, which will execute them sequentially. `-i` has to be exited manually to continue the sequence.
-	The normal q command ends the current instruction flag, and a "hard quit" with `q exits the process.
+		If non-flag arguments are given (like `$ adc foo bar`), they are interpreted as file paths.
 
+	Any amount of instructions may be provided, which will execute them in the given order. `-i` has to be exited manually to continue the sequence.
+	The normal q command ends the current instruction, a hard quit (`q) also cancels all following instructions. Each quit updates the overall exit code.
+
+	With no instructions or state flags (below), this CLI will attempt to find and run the file `~/.adcrc`, and then launch `-i`.
+
+	----------------
 	STATE MANAGEMENT
 	----------------
 	The whole interpreter state can be stored as a file using these flags (or in-language commands).
-	State files are actually just ADC scripts that follow a standard format. The "load" option simply discards the current state and executes the script.
+	State files are actually just ADC scripts that follow a standard format. Loading simply discards the current state and executes the script.
+
 	`-s|--save <path>` saves the state to a file, creating or overwriting it.
 	`-l|--load <path>` loads a state file, without creating or modifying it.
-	These are also chainable with the instruction flags, which will perform them as part of the sequence.
-	This executable tries to open all files specified with `-f`/`-s`/`-l` immediately, before any ADC code runs. It does not acquire exclusive locks, so beware of data races.
 
-	MODES
-	-----
-	`-r|--restrict`: Disables all in-language commands that interact with the OS to protect against untrusted input. The above flags are unaffected.
+	These can be combined with instructions, which will perform them as part of the sequence.
+	This CLI tries to open all files specified with `-f`/`-s`/`-l` immediately, before any ADC code runs. Avoid concurrent access.
+
+	-----------
+	IO/OS MODES
+	-----------
+	`-r|--restrict` disables all in-language commands that interact with the OS to protect against untrusted input. The CLI flags with file access remain functional.
 		Disabling OS commands is also possible with the in-language command `_restrict` (one-way) or by building the crate with `-F no_os`.
 	`-d|--debug`: Debug mode, logs every executed command to stderr.
 	`-q|--quiet`: Quiet mode, suppresses all errors (disables stderr).
-	Debug and Quiet are mutually exclusive. The error display mode is controllable with in-language commands, these options just set the default for every interpreter instance.
+		Debug and Quiet are mutually exclusive. Also controllable with in-language commands, these just set the default for every instruction.
+	`-t|--tee <path>` writes a copy of all IO streams to a file (append-only access). May only be used once.
 
+	-----
 	OTHER
 	-----
 	`-h|--help` prints this message and exits, discarding all following flags.
-	`-v|--version` prints the interpreter version and exits, ditto.
-"#;
+	`-v|--version` prints the interpreter version and exits, ditto.\
+";
 
 fn main() -> ExitCode {
 	fn syntax_error(s: String) -> ExitCode {
@@ -78,16 +88,17 @@ fn main() -> ExitCode {
 				args.push(Flag(
 					//reduce long-form flags
 					match long {
-						"inter" => {'i'}
-						"exec" => {'e'}
-						"file" => {'f'}
-						"save" => {'s'}
-						"load" => {'l'}
-						"restrict" => {'r'}
-						"debug" => {'d'}
-						"quiet" => {'q'}
-						"help" => {'h'}
-						"version" => {'v'}
+						"inter" => 'i',
+						"exec" => 'e',
+						"file" => 'f',
+						"save" => 's',
+						"load" => 'l',
+						"restrict" => 'r',
+						"debug" => 'd',
+						"quiet" => 'q',
+						"tee" => 't',
+						"help" => 'h',
+						"version" => 'v',
 						_ => {
 							return syntax_error(format!("Unrecognized flag: --{long}"));
 						}
@@ -129,14 +140,46 @@ fn main() -> ExitCode {
 		})
 	}
 
+	fn try_appending_fd(name: &str) -> Result<File, ExitCode> {
+		OpenOptions::new().append(true).create(true).open(name).map_err(|e| {
+			runtime_error(format!("Can't open file '{name}' for appending: {e}"))
+		})
+	}
+
 	fn try_writing_fd(name: &str) -> Result<File, ExitCode> {
 		OpenOptions::new().write(true).create(true).truncate(false).open(name).map_err(|e| {
 			runtime_error(format!("Can't open file '{name}' for writing: {e}"))
 		})
 	}
 
+	let mut io = IOStreams::process();
+	struct TeeReader(Box<dyn ReadLine + Send>, File);
+	impl ReadLine for TeeReader {
+		fn read_line(&mut self) -> std::io::Result<String> {
+			let mut s = self.0.read_line()?;
+			s.push('\n');
+			self.1.write_all(s.as_bytes()).map(|_| s)
+		}
+
+		fn clear_history(&mut self) {
+			self.0.clear_history()
+		}
+	}
+	struct TeeWriter(Box<dyn Write + Send>, File);
+	impl Write for TeeWriter {
+		fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+			self.1.write_all(buf)?;
+			self.0.write(buf)
+		}
+
+		fn flush(&mut self) -> std::io::Result<()> {
+			self.0.flush()
+		}
+	}
+
 	//parse tokens into actions + open files, already performs `--help` and `--version`
 	let mut args = args.iter().peekable();
+	let mut tee = false;
 	while let Some(arg) = args.next() {
 		match arg {
 			Plain(filename) => {	//only possible before any flags
@@ -218,6 +261,42 @@ fn main() -> ExitCode {
 				if ll == LogLevel::Debug { return syntax_error("Debug and Quiet modes are incompatible".into()); }
 				ll = LogLevel::Quiet;
 			}
+			Flag('t') if !tee => {
+				tee = true;
+				if let Some(Plain(file)) = args.peek() {	//consume one arg as filename
+					args.next();
+					if let Some(Plain(_)) = args.peek() {
+						return syntax_error("Tee option may only have one argument".into());
+					}
+					io.0 = Box::new(TeeReader(
+						io.0,
+						match try_appending_fd(file) {
+							Ok(fd) => {fd}
+							Err(e) => {return e;}
+						}
+					));
+					io.1 = Box::new(TeeWriter(
+						io.1,
+						match try_appending_fd(file) {
+							Ok(fd) => {fd}
+							Err(e) => {return e;}
+						}
+					));
+					io.2 = Box::new(TeeWriter(
+						io.2,
+						match try_appending_fd(file) {
+							Ok(fd) => {fd}
+							Err(e) => {return e;}
+						}
+					));
+				}
+				else {
+					return syntax_error("Tee option needs a file path".into());
+				}
+			}
+			Flag('t') if tee => {
+				return syntax_error("Tee option may only be used once".into());
+			}
 
 			Flag('h') => {
 				println!("{HELP}");
@@ -234,11 +313,19 @@ fn main() -> ExitCode {
 		}
 	}
 
-	if acts.is_empty() { acts.push(Inter("> ".into())); }	//default action
+	if acts.is_empty() {
+		if let Some(mut pb) = std::env::home_dir() {	//try to read dotfile:
+			pb.push(".adcrc");
+			if let Ok(fd) = OpenOptions::new().read(true).open(pb) {
+				acts.push(Script(fd));
+			}
+		}
+		acts.push(Inter("> ".into()));	//default action
+	}
 
 	//init state structs
 	let mut st = State::default();
-	let io = Arc::new(Mutex::new(IOStreams::process()));
+	let io = Arc::new(Mutex::new(io));
 	let mut exit_code = 0;
 
 	'act: for act in acts {

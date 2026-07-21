@@ -10,7 +10,7 @@ There is some behavior specific to this included CLI wrapper, which may not be p
 
 All "permanent" data (main stack, registers, parameters) is stored in a `State` struct, which the interpreter mutates as it executes ADC code. There are some additional ways of manipulating the whole `State`.
 
-For this implementation, the term "interpreter instance" refers to one call of the `exec` function. This is the ultimate scope limit for any temporary options that aren't part of the `State`. **CLI:** Interpreter instances are invoked by `-i`, `-e`, and `-f`, where `-i` does it repeatedly until exited.
+For this implementation, the term "interpreter instance" refers to one call of the `interpreter` function. This is the ultimate scope limit for any temporary options that aren't part of the `State`. **CLI:** Interpreter instances are invoked by `-i`, `-e`, and `-f`, where `-i` does it repeatedly until exited.
 
 
 # Core principles
@@ -50,7 +50,7 @@ In the following documentation, types expected by commands are annotated in a co
   - `NF`: Number is converted to/from floating-point (IEEE 754 64-bit) for calculation, see [below](#numbers)
 - `S`: String
   - `SC`: Exactly one character
-  - `SM`: Macro, a valid sequence of ADC commands (not verified before execution, behavior is undecidable due to depending on prior state)
+  - `SM`: Macro, a valid sequence of ADC commands (not verified before execution)
 
 
 # Command structure and execution
@@ -302,9 +302,23 @@ In this implementation, all internal array functions use heap-based algorithms i
 
 # Array operations and indexing
 
-Array input works by pushing any newly created values to a buffer instead of the stack. This does not apply to values that are returned to the stack upon [errors](#errors).
+Array input works by pushing any newly created values to a temporary buffer instead of the stack. This does not apply to values that are returned to the stack upon [errors](#errors).
 
 The scope of array input is limited to macro boundaries. The end of a macro implies sufficient closing `)`s.
+
+Array commands are digraphs beginning with `a`. Since they operate on whole arrays, the usual [polymorphism](#array-polymorphism) does not apply. Instead, nested arrays have be indexed into.
+
+
+## Indexing
+
+The valid forms of an array index (`NI`) are:
+- Single `NP`, which selects one element from the first level of an array
+- Array of one sub-index for each dimension, where each sub-index is a single `NP`. The last sub-index may be a pair of bounds like `(NPa NPb)`, which selects a range of elements. An upper bound of 0 means "until the end", *a* may not be larger than *b* otherwise.
+
+
+## Array commands
+
+- `(Xa) NIb , → (Xz)` extracts an element or range from *a* according to *b*.
 
 
 # Registers

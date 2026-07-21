@@ -18,6 +18,7 @@ macro_rules! cmd {
 	}
 }
 
+//   k
 cmd!(sk, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(r) = &*va {
@@ -35,6 +36,7 @@ cmd!(sk, st {
 	}
 });
 
+//   i
 cmd!(si, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(r) = &*va {
@@ -52,6 +54,7 @@ cmd!(si, st {
 	}
 });
 
+//   o
 cmd!(so, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(r) = &*va {
@@ -69,6 +72,7 @@ cmd!(so, st {
 	}
 });
 
+//   m
 cmd!(sm, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(r) = &*va {
@@ -86,37 +90,45 @@ cmd!(sm, st {
 	}
 });
 
+//   K
 cmd!(gk, st {
 	Ok(vec![Value::N(st.params.get_k().into())])
 });
 
+//   I
 cmd!(gi, st {
 	Ok(vec![Value::N(st.params.get_i().into())])
 });
 
+//   O
 cmd!(go, st {
 	Ok(vec![Value::N(st.params.get_o().into())])
 });
 
+//   M
 cmd!(gm, st {
 	Ok(vec![Value::N((st.params.get_m() as u8).into())])
 });
 
+//   {
 cmd!(cbo, st {
 	st.params.create();
 	Ok(vec![])
 });
 
+//   }
 cmd!(cbc, st {
 	st.params.destroy();
 	Ok(vec![])
 });
 
+//   c
 cmd!(cls, st {
 	st.mstk.clear();
 	Ok(vec![])
 });
 
+//   C
 cmd!(cln, st {
 	if let Some(va) = st.mstk.pop() {
 		if let Value::N(r) = &*va {
@@ -147,6 +159,7 @@ cmd!(cln, st {
 	}
 });
 
+//   r
 cmd!(rev, st {
 	let len = st.mstk.len();
 	if len >= 2 {

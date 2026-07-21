@@ -145,6 +145,7 @@ pub fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, 
 	}
 }
 
+//   +
 dya!(add
 	B(ba), B(bb), _ => {	//concat booleans
 		let mut res = ba.to_owned();
@@ -157,6 +158,7 @@ dya!(add
 	S(sa), S(sb), _ => Ok(S(sa.to_owned() + sb))	//concat strings
 );
 
+//   -
 dya!(sub
 	B(ba), B(bb), _ => {	//boolean xor
 		Ok(B(ba.to_owned() ^ bb))
@@ -179,6 +181,7 @@ dya!(sub
 	}
 );
 
+//   *
 dya!(mul
 	B(ba), B(bb), _ => {	//boolean and
 		Ok(B(ba.clone() & bb))
@@ -207,6 +210,7 @@ dya!(mul
 	}
 );
 
+//   /
 dya!(div
 	B(ba), B(bb), _ => {	//boolean or
 		Ok(B(ba.clone() | bb))
@@ -234,6 +238,7 @@ dya!(div
 	}
 );
 
+//   !
 mon!(neg
 	B(ba), _ => Ok(B(!ba.to_owned())),	//negate boolean
 	
@@ -256,6 +261,7 @@ mon!(neg
 	}
 );
 
+//   ^
 dya!(pow
 	B(ba), B(bb), _ => {	//find sequence in boolean
 		if bb.is_empty() {	//empty pattern matches at start
@@ -314,6 +320,7 @@ dya!(pow
 	}
 );
 
+//   v
 mon!(sqrt
 	B(ba), _ => {	//reverse boolean
 		let mut bz = ba.to_owned();
@@ -336,6 +343,7 @@ mon!(sqrt
 	S(sa), _ => Ok(S(sa.chars().rev().collect()))	//reverse string
 );
 
+//   V
 dya!(root
 	N(ra), N(rb), _ => {	//bth root of a
 		if *rb == Rational::ZERO {	//undefined
@@ -368,6 +376,7 @@ dya!(root
 	}
 );
 
+//   g
 mon!(log
 	B(ba), _ => Ok(N(ba.len().into())),	//length of boolean
 	
@@ -385,6 +394,7 @@ mon!(log
 	S(sa), true => Ok(N(sa.len().into()))	//byte length of string
 );
 
+//   G
 dya!(logb
 	B(ba), B(bb), _ => {	//count matches in boolean
 		if bb.is_empty() {	//empty pattern matches everywhere
@@ -432,6 +442,7 @@ dya!(logb
 	}
 );
 
+//   %
 dya!(modu
 	B(ba), N(rb), _ => {	//extract bit
 		let ub = r_u(rb)?;
@@ -465,6 +476,7 @@ dya!(modu
 	}
 );
 
+//   ~
 dya!(euc
 	B(ba), N(rb), _ => {	//split boolean
 		let ub = r_u(rb)?;
@@ -498,6 +510,7 @@ dya!(euc
 	}
 );
 
+//   |
 tri!(bar
 	a, b, B(bc), _ => {	//selection (c ? a : b)
 		if bc.len() == 1 {	//one bit, make scalar
@@ -534,12 +547,14 @@ tri!(bar
 	}
 );
 
+//   z
 mon!(disc
 	B(_), _ => Ok(N(Rational::const_from_unsigned(1))),
 	N(_), _ => Ok(N(Rational::const_from_unsigned(2))),
 	S(_), _ => Ok(N(Rational::const_from_unsigned(3)))
 );
 
+//   =
 dya!(eq
 	B(ba), B(bb), _ => {
 		if ba.len() == bb.len() {
@@ -566,6 +581,7 @@ dya!(eq
 	}
 );
 
+//   <
 dya!(lt
 	B(ba), B(bb), _ => {
 		let mut bz = BitVec::new();
@@ -590,6 +606,7 @@ dya!(lt
 	}
 );
 
+//   >
 dya!(gt
 	B(ba), B(bb), _ => {
 		let mut bz = BitVec::new();
@@ -614,6 +631,7 @@ dya!(gt
 	}
 );
 
+//   n
 mon!(fac
 	N(ra), _ => {	//factorial
 		let na = r_n(ra)?;
@@ -643,6 +661,7 @@ mon!(fac
 	}
 );
 
+//   t
 dya!(trig
 	N(ra), N(rb), _ => {
 		let ib = r_i(rb)?;
