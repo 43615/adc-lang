@@ -220,7 +220,7 @@ impl ThreadHandle {
 	/// `name` sets the thread's name, which is visible at the OS level [where supported](std::thread#naming-threads) and shown in ADC error messages.
 	/// Within ADC, the `X` command sets this to a [canonical pretty-print](reg_index_pretty) of the handle register's index.
 	/// Any NUL bytes in `name` are removed to avoid OS errors.
-	pub fn spawn(name: &str, mut st: State, start: String, io: Arc<Mutex<IOStreams>>, ll: LogLevel, restrict: bool) -> std::io::Result<Self> {
+	pub fn spawn(name: &str, mut st: State, start: String, io: Arc<Mutex<dyn IOStreams>>, ll: LogLevel, restrict: bool) -> std::io::Result<Self> {
 		let (ktx, krx) = std::sync::mpsc::channel::<()>();
 		let fin = Arc::new(Once::new());
 		let th_fin = Arc::clone(&fin);
@@ -563,12 +563,23 @@ impl TryFrom<Utf8Iter<'_>> for String {
 
 impl Iterator for Utf8Iter<'_> {
 	type Item = u8;
+
 	fn next(&mut self) -> Option<Self::Item> {
 		let (bytes, pos): (&[u8], &mut usize) = match self {
 			Self::Borrowed {bytes, pos} => (bytes, pos),
 			Self::Owned {bytes, pos} => (bytes, pos)
 		};
 		bytes.get(*pos).copied().inspect(|_| {*pos+=1;})
+	}
+
+	/// Lower and upper bound on remaining encoded `char`s, assuming valid UTF-8.
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		let (bytes, pos): (&[u8], &usize) = match self {
+			Self::Borrowed {bytes, pos} => (bytes, pos),
+			Self::Owned {bytes, pos} => (bytes, pos)
+		};
+		let len = bytes.len().saturating_sub(*pos);
+		(len.div_ceil(4), Some(len))
 	}
 }
 
@@ -966,7 +977,7 @@ impl ParamStk {
 		unsafe { self.0.last().unwrap_unchecked().3 }
 	}
 }
-/// One entry of [`DEFAULT_PARAMS`].
+/// One entry of [`DEFAULT_PARAMS`]
 impl Default for ParamStk {
 	fn default() -> Self {
 		let mut p = Self(Vec::new());
@@ -974,7 +985,7 @@ impl Default for ParamStk {
 		p
 	}
 }
-/// Length must be at least 1.
+/// Length must be at least 1
 impl TryFrom<Vec<Params>> for ParamStk {
 	type Error = ();
 
@@ -1009,7 +1020,7 @@ pub struct State {
 	/// Parameters
 	pub params: ParamStk
 }
-/// Export to state file with standard format
+/// Exports to state file with standard format
 impl Display for State {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{}", String::from_utf8_lossy(&crate::STATE_FILE_HEADER))?;
@@ -1043,21 +1054,21 @@ impl Display for State {
 	}
 }
 impl State {
-	/// Reallocate all fields to fit, do not discard any stored data
+	/// Reallocates all fields to fit, does not discard any stored data
 	pub fn trim(&mut self) {
 		self.mstk.shrink_to_fit();
 		self.regs.trim();
 		self.params.0.shrink_to_fit();
 	}
 
-	/// Clear all stored data, do not touch thread handles
+	/// Clears all stored data, does not touch thread handles.
 	pub fn clear_vals(&mut self) {
 		self.mstk = Vec::new();
 		self.regs.clear_vals();
 		self.params = ParamStk::default();
 	}
 
-	/// Replace stored data with contents of `other`, conflicting thread handles in `other` will be killed
+	/// Replaces stored data with contents of `other`, conflicting thread handles in `other` will be killed.
 	pub fn replace_vals(&mut self, other: Self) {
 		self.mstk = other.mstk;
 		self.regs.replace_vals(other.regs);
@@ -1084,7 +1095,7 @@ impl State {
 	pub unsafe fn interpreter(
 		&mut self,
 		start: Utf8Iter,
-		io: Arc<Mutex<IOStreams>>,
+		io: Arc<Mutex<dyn IOStreams>>,
 		ll: LogLevel,
 		kill: Option<&Receiver<()>>,
 		restrict: bool
@@ -1107,7 +1118,7 @@ impl State {
 	pub fn interpreter_no_os(
 		&mut self,
 		start: Utf8Iter,
-		io: Arc<Mutex<IOStreams>>,
+		io: Arc<Mutex<dyn IOStreams>>,
 		ll: LogLevel,
 		kill: Option<&Receiver<()>>,
 	) -> std::io::Result<ExecResult>

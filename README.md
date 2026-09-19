@@ -35,7 +35,7 @@ This crate should work on all systems supported by Rust. However, I do not exten
 - Asynchronous multithreaded macro execution using registers as thread handles.
 - Expanded command line argument syntax, including saving/loading the whole interpreter state.
 - OS-interfacing features, such as running commands and file IO. May be strictly disabled in several ways for dealing with untrusted input.
-- This crate can be used as a library and connected to any IO wrapper using `std::io` traits.
+- This crate can be used as a library and connected to any IO wrapper using a generic interface.
 
 
 ## General principles of this implementation:

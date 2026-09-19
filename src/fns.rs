@@ -566,16 +566,19 @@ dya!(eq
 			Ok(B(bitvec![u8, Lsb0; 0]))
 		}
 	},
+
 	N(ra), N(rb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(ra == rb);
 		Ok(B(bz))
 	},
+
 	S(sa), S(sb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(sa == sb);
 		Ok(B(bz))
 	},
+
 	_, _, true => {	//total: false if types differ
 		Ok(B(bitvec![u8, Lsb0; 0]))
 	}
@@ -591,16 +594,19 @@ dya!(lt
 		);
 		Ok(B(bz))
 	},
+
 	N(ra), N(rb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(ra < rb);
 		Ok(B(bz))
 	},
+
 	S(sa), S(sb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(str_cmp(sa, sb).is_lt());
 		Ok(B(bz))
 	},
+
 	_, _, true => {	//total: false if types differ
 		Ok(B(bitvec![u8, Lsb0; 0]))
 	}
@@ -616,16 +622,19 @@ dya!(gt
 		);
 		Ok(B(bz))
 	},
+
 	N(ra), N(rb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(ra > rb);
 		Ok(B(bz))
 	},
+
 	S(sa), S(sb), _ => {
 		let mut bz = BitVec::new();
 		bz.push(str_cmp(sa, sb).is_gt());
 		Ok(B(bz))
 	},
+	
 	_, _, true => {	//total: false if types differ
 		Ok(B(bitvec![u8, Lsb0; 0]))
 	}
@@ -665,46 +674,22 @@ mon!(fac
 dya!(trig
 	N(ra), N(rb), _ => {
 		let ib = r_i(rb)?;
-		match i8::try_from(&ib) {
-			Ok(1) => {
-				Ok(N(f_r(r_f(ra)?.sin())?))
-			},
-			Ok(2) => {
-				Ok(N(f_r(r_f(ra)?.cos())?))
-			},
-			Ok(3) => {
-				Ok(N(f_r(r_f(ra)?.tan())?))
-			},
-			Ok(4) => {
-				Ok(N(f_r(r_f(ra)?.sinh())?))
-			},
-			Ok(5) => {
-				Ok(N(f_r(r_f(ra)?.cosh())?))
-			},
-			Ok(6) => {
-				Ok(N(f_r(r_f(ra)?.tanh())?))
-			},
-			Ok(-1) => {
-				Ok(N(f_r(r_f(ra)?.asin())?))
-			},
-			Ok(-2) => {
-				Ok(N(f_r(r_f(ra)?.acos())?))
-			},
-			Ok(-3) => {
-				Ok(N(f_r(r_f(ra)?.atan())?))
-			},
-			Ok(-4) => {
-				Ok(N(f_r(r_f(ra)?.asinh())?))
-			},
-			Ok(-5) => {
-				Ok(N(f_r(r_f(ra)?.acosh())?))
-			},
-			Ok(-6) => {
-				Ok(N(f_r(r_f(ra)?.atanh())?))
-			},
-			_ => {
-				Err(Arith(format!("Unknown function number {ib}")))
-			}
-		}
+		let fun = match i8::try_from(&ib) {
+			Ok(0) => std::convert::identity,
+			Ok(1) => f64::sin,
+			Ok(2) => f64::cos,
+			Ok(3) => f64::tan,
+			Ok(4) => f64::sinh,
+			Ok(5) => f64::cosh,
+			Ok(6) => f64::tanh,
+			Ok(-1) => f64::asin,
+			Ok(-2) => f64::acos,
+			Ok(-3) => f64::atan,
+			Ok(-4) => f64::asinh,
+			Ok(-5) => f64::acosh,
+			Ok(-6) => f64::atanh,
+			_ => { return Err(Arith(format!("Unknown function number {ib}"))); }
+		};
+		Ok(N(f_r(fun(r_f(ra)?))?))
 	}
 );

@@ -5,7 +5,7 @@ use malachite::{Natural, Rational};
 use malachite::base::num::arithmetic::traits::{Abs, DivMod, Factorial, Floor, Parity, Pow, Reciprocal, Sign};
 use malachite::base::num::basic::traits::{Zero, One, Two};
 use malachite::base::num::conversion::traits::{ExactFrom, Digits, WrappingFrom};
-use malachite::rational::arithmetic::traits::Approximate;
+use malachite::rational::rational::arithmetic::traits::Approximate;
 
 pub fn factoradic_digits(r: &Rational, k: usize) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
 	let sign = r.sign() == Less;

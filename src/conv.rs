@@ -21,7 +21,7 @@ pub fn r_i(ra: &Rational) -> Result<Integer, FnErr> {
 }
 
 pub fn r_f(ra: &Rational) -> Result<f64, FnErr> {
-	use malachite::rational::conversion::primitive_float_from_rational::FloatConversionError;
+	use malachite::rational::rational::conversion::primitive_float_from_rational::FloatConversionError;
 	match f64::try_from(ra) {
 		Ok(f) => {Ok(f)},
 		Err(FloatConversionError::Inexact) => {Ok(f64::rounding_from(ra, RoundingMode::Nearest).0)},

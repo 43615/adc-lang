@@ -18,6 +18,7 @@ pub(crate) mod num;
 #[cfg(not(feature = "no_os"))]
 mod os;
 
+use std::fs::File;
 use std::io::{Write, BufRead, ErrorKind};
 use std::ops::Neg;
 use std::panic::catch_unwind;
@@ -31,8 +32,6 @@ use malachite::base::num::arithmetic::traits::{Factorial, NegAssign, Pow};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One, Two};
 use malachite::base::num::conversion::traits::{PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
 use malachite::base::num::random::RandomPrimitiveInts;
-use malachite::base::rational_sequences::RationalSequence;
-use malachite::base::rounding_modes::RoundingMode;
 use crate::errors::TypeLabel;
 
 
@@ -41,28 +40,20 @@ pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
 
 struct LineEditor(Interface<DefaultTerminal>);
 
-/// Generic input stream adapter trait, used for adding a proper line editor.
-///
-/// Comes with a generic implementation for all [`BufRead`] types.
-pub trait ReadLine {
-	/// This is called once by every execution of the `?` command within ADC.
-	///
-	/// [`ErrorKind::Interrupted`] cancels `?` with an error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
+/// Input stream adapter trait, used for adding a proper line editor
+trait ReadLine {
 	fn read_line(&mut self) -> std::io::Result<String>;
 
-	/// If [`Self`] implements a history, clear it.
 	fn clear_history(&mut self);
 }
-impl<T: BufRead> ReadLine for T {
+impl ReadLine for std::io::Stdin {
 	fn read_line(&mut self) -> std::io::Result<String> {
 		let mut buf = String::new();
-		self.read_line(&mut buf)?;
+		self.lock().read_line(&mut buf)?;
 		Ok(buf)
 	}
 
-	fn clear_history(&mut self) {
-		// no history, do nothing
-	}
+	fn clear_history(&mut self) {}
 }
 impl ReadLine for LineEditor {
 	fn read_line(&mut self) -> std::io::Result<String> {
@@ -86,9 +77,7 @@ impl ReadLine for LineEditor {
 		}
 	}
 
-	fn clear_history(&mut self) {
-		self.0.clear_history();
-	}
+	fn clear_history(&mut self) { self.0.clear_history(); }
 }
 
 fn input_stream() -> Box<dyn ReadLine + Send> {
@@ -102,37 +91,101 @@ fn input_stream() -> Box<dyn ReadLine + Send> {
 			Box::new(LineEditor(iface))
 		},
 		Err(_) => {	//fall back to plain stdin
-			Box::new(std::io::BufReader::new(std::io::stdin()))
+			Box::new(std::io::stdin())
 		}
 	}
 }
 
-/// Bundle of standard IO streams, generic interface to support custom IO wrappers
-pub struct IOStreams (
-	/// Input
-	pub Box<dyn ReadLine + Send>,
-	/// Output
-	pub Box<dyn Write + Send>,
-	/// Error
-	pub Box<dyn Write + Send>
-);
-impl IOStreams {
-	/// Use dummy IO streams, these do nothing
-	pub fn empty() -> Self {
-		Self (
-			Box::new(std::io::empty()),
-			Box::new(std::io::empty()),
-			Box::new(std::io::empty())
-		)
-	}
+/// Interface for the required IO streams (input, output, error)
+pub trait IOStreams : Send {
+	/// Read one line from the input stream. This is called once by every execution of the `?` command within ADC.
+	///
+	/// [`ErrorKind::Interrupted`] cancels `?` with an error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
+	fn read_line(&mut self) -> std::io::Result<String>;
 
-	/// Use IO streams of the process (stdin, stdout, stderr), with extra [line editor](linefeed) on stdin
-	pub fn process() -> Self {
+	/// Clear the input stream's history, if applicable.
+	///
+	/// Should be infallible.
+	fn clear_history(&mut self);
+
+	/// Print `buf` to the output stream, flush if applicable.
+	///
+	/// Errors are returned early from the interpreter.
+	fn print(&mut self, buf: String) -> std::io::Result<()>;
+
+	/// Print `buf` to the error stream, flush if applicable.
+	/// 
+	/// Errors are returned early from the interpreter.
+	fn eprint(&mut self, buf: String) -> std::io::Result<()>;
+}
+
+/// Dummy IO streams that do nothing
+pub struct EmptyIO(std::io::Empty);
+impl Default for EmptyIO {
+	fn default() -> Self { Self(std::io::empty()) }
+}
+impl IOStreams for EmptyIO {
+	fn read_line(&mut self) -> std::io::Result<String> { Ok(String::new()) }
+	fn clear_history(&mut self) {}
+	fn print(&mut self, _buf: String) -> std::io::Result<()> { Ok(()) }
+	fn eprint(&mut self, _buf: String) -> std::io::Result<()> { Ok(()) }
+}
+
+/// Attach to the IO streams of the process, input includes a [line editor](linefeed) where supported
+pub struct ProcessIO (
+	Box<dyn ReadLine + Send>,
+	std::io::Stdout,
+	std::io::Stderr
+);
+impl Default for ProcessIO {
+	fn default() -> Self {
 		Self (
 			input_stream(),
-			Box::new(std::io::stdout()),
-			Box::new(std::io::stderr())
+			std::io::stdout(),
+			std::io::stderr()
 		)
+	}
+}
+impl IOStreams for ProcessIO {
+	fn read_line(&mut self) -> std::io::Result<String> { self.0.read_line() }
+
+	fn clear_history(&mut self) { self.0.clear_history(); }
+
+	fn print(&mut self, buf: String) -> std::io::Result<()> {
+		self.1.write_all(buf.as_bytes())?;
+		self.1.flush()
+	}
+
+	fn eprint(&mut self, buf: String) -> std::io::Result<()> {
+		self.2.write_all(buf.as_bytes())?;
+		self.2.flush()
+	}
+}
+
+/// [`ProcessIO`] but saving all IO contents to a file
+pub struct TeeProcessIO(ProcessIO, File);
+impl TeeProcessIO {
+	/// File should be opened with append access
+	pub fn new(fd: File) -> Self { Self(ProcessIO::default(), fd) }
+}
+impl IOStreams for TeeProcessIO {
+	fn read_line(&mut self) -> std::io::Result<String> {
+		let mut s = self.0.read_line()?;
+		s.push('\n');
+		self.1.write_all(s.as_bytes())?;
+		Ok(s)
+	}
+
+	fn clear_history(&mut self) { self.0.clear_history(); }
+
+	fn print(&mut self, buf: String) -> std::io::Result<()> {
+		self.1.write_all(buf.as_bytes())?;
+		self.0.print(buf)
+	}
+
+	fn eprint(&mut self, buf: String) -> std::io::Result<()> {
+		self.1.write_all(buf.as_bytes())?;
+		self.0.eprint(buf)
 	}
 }
 
@@ -280,7 +333,7 @@ pub fn interpreter_simple(
 	kill: Option<&Receiver<()>>
 ) -> std::io::Result<ExecResult>
 {
-	let no_io = Arc::new(Mutex::new(IOStreams::empty()));
+	let no_io = Arc::new(Mutex::new(EmptyIO::default()));
 	interpreter_no_os(st, start, no_io, LogLevel::Quiet, kill)
 }
 
@@ -290,7 +343,7 @@ pub fn interpreter_simple(
 pub fn interpreter_no_os(
 	st: &mut State,
 	start: Utf8Iter,
-	io: Arc<Mutex<IOStreams>>,
+	io: Arc<Mutex<dyn IOStreams>>,
 	ll: LogLevel,
 	kill: Option<&Receiver<()>>,
 ) -> std::io::Result<ExecResult>
@@ -310,7 +363,7 @@ pub unsafe fn interpreter_no_io(
 	restrict: bool
 ) -> std::io::Result<ExecResult>
 {
-	let no_io = Arc::new(Mutex::new(IOStreams::empty()));
+	let no_io = Arc::new(Mutex::new(EmptyIO::default()));
 	unsafe { interpreter(st, start, no_io, LogLevel::Quiet, kill, restrict) }
 }
 
@@ -321,16 +374,13 @@ pub unsafe fn interpreter_no_io(
 /// # Arguments
 /// - `st`: State struct to work on, modified in-place
 /// - `start`: Initial commands to run
-/// - `io`: Bundle of IO stream handles
-///   - `io.0`: Input, read by `?` one line at a time
-///   - `io.1`: Output, written to by printing commands
-///   - `io.2`: Error messages, one per line
-/// - `ll`: Level of verbosity for `io.2`
-/// - `kill`: Optional kill signal, receiving `()` terminates the interpreter as soon as it parses its next command.
+/// - `io`: Bundle of IO stream handles, will be `Arc::clone`d to threads
+/// - `ll`: Level of verbosity for error stream
+/// - `kill`: Optional kill signal, receiving `()` terminates the interpreter ASAP
 /// - `restrict`: Restricted mode switch, enable for untrusted input. If `false`, the interpreter may read/write files and execute OS commands, subject to any OS-level permissions.
 ///
 /// # Errors
-/// Any IO errors (except those specified [here](ReadLine::read_line)) that arise when accessing the [`IOStreams`] are returned early, aborting the interpreter.
+/// Any IO errors (except those specified [here](IOStreams::read_line)) that arise when accessing the [`IOStreams`] are returned early, aborting the interpreter.
 ///
 /// This will result in an incomplete, although internally consistent, [`State`]. Keep that possibility to a minimum when preparing custom [`IOStreams`].
 ///
@@ -341,7 +391,7 @@ pub unsafe fn interpreter_no_io(
 pub unsafe fn interpreter(
 	st: &mut State,
 	start: Utf8Iter,
-	io: Arc<Mutex<IOStreams>>,
+	io: Arc<Mutex<dyn IOStreams>>,
 	mut ll: LogLevel,
 	kill: Option<&Receiver<()>>,
 	#[cfg_attr(feature = "no_os", expect(unused_variables))]
@@ -365,8 +415,7 @@ pub unsafe fn interpreter(
 		($c:expr, $s:expr) => {
 			if ll != LogLevel::Quiet {
 				let mut lock = io.lock().unwrap();
-				writeln!(lock.2, "! {th_name}{}: {}", $c, $s)?;
-				lock.2.flush()?;
+				lock.eprint(format!("! {th_name}{}: {}\n", $c, $s))?;
 				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
@@ -375,8 +424,7 @@ pub unsafe fn interpreter(
 			let s = format!($f, $($s),*);
 			if ll != LogLevel::Quiet {
 				let mut lock = io.lock().unwrap();
-				writeln!(lock.2, "! {th_name}{}: {}", $c, s)?;
-				lock.2.flush()?;
+				lock.eprint(format!("! {th_name}{}: {}\n", $c, s))?;
 				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, s));
@@ -387,8 +435,7 @@ pub unsafe fn interpreter(
     	($c:expr, $s:expr) => {
 			if ll != LogLevel::Quiet {
 				let mut lock = io.lock().unwrap();
-				writeln!(lock.2, "? {th_name}{}: {}", $c, $s)?;
-				lock.2.flush()?;
+				lock.eprint(format!("? {th_name}{}: {}\n", $c, $s))?;
 				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, $s.into()));
@@ -397,8 +444,7 @@ pub unsafe fn interpreter(
 			let s = format!($f, $($s),*);
 			if ll != LogLevel::Quiet {
 				let mut lock = io.lock().unwrap();
-				writeln!(lock.2, "? {th_name}{}: {}", $c, s)?;
-				lock.2.flush()?;
+				lock.eprint(format!("? {th_name}{}: {}\n", $c, s))?;
 				drop(lock);
 			}
 			elatch = Some((Natural::ZERO, $c, s));
@@ -409,16 +455,14 @@ pub unsafe fn interpreter(
     	($s:expr) => {
 			if ll == LogLevel::Debug {
 				let mut lock = io.lock().unwrap();
-				writeln!(lock.2, "\tDEBUG: {th_name}{}", $s)?;
-				lock.2.flush()?;
+				lock.eprint(format!("\tDEBUG: {th_name}{}\n", $s))?;
 				drop(lock);
 			}
 		};
 		($f:literal, $($s:expr),*) => {
 			if ll == LogLevel::Debug {
 				let mut lock = io.lock().unwrap();
-				writeln!(lock.2, "\tDEBUG: {th_name}{}", format!($f, $($s),*))?;
-				lock.2.flush()?;
+				lock.eprint(format!("\tDEBUG: {th_name}{}\n", format!($f, $($s),*)))?;
 				drop(lock);
 			}
 		};
@@ -714,7 +758,7 @@ pub unsafe fn interpreter(
 						},
 						b'?' => {	//read line
 							let mut lock = io.lock().unwrap();
-							let res = lock.0.read_line();
+							let res = lock.read_line();
 							drop(lock);
 							match res {
 								Ok(s) => {
@@ -737,15 +781,14 @@ pub unsafe fn interpreter(
 						},
 						b'p' => {	//println top
 							if let Some(va) = st.mstk.pop() {
-								let vs = va.display(st.params.get_k(), st.params.get_o(), st.params.get_m(), alt);
+								let mut vs = va.display(st.params.get_k(), st.params.get_o(), st.params.get_m(), alt);
+								vs.push('\n');
 								if let Some(s) = &mut pbuf {
 									s.push_str(&vs);
-									s.push('\n');
 								}
 								else {
 									let mut lock = io.lock().unwrap();
-									writeln!(lock.1, "{}", vs)?;
-									lock.1.flush()?;
+									lock.print(vs)?;
 									drop(lock);
 								}
 							}
@@ -761,8 +804,7 @@ pub unsafe fn interpreter(
 								}
 								else {
 									let mut lock = io.lock().unwrap();
-									write!(lock.1, "{}", vs)?;
-									lock.1.flush()?;
+									lock.print(vs)?;
 									drop(lock);
 								}
 							}
@@ -832,7 +874,7 @@ pub unsafe fn interpreter(
 							}
 						},
 						b'q' => {
-							let u = u8::wrapping_from(&Integer::rounding_from(rptr.unwrap_or_default(), RoundingMode::Down).0);
+							let u = u8::wrapping_from(&Integer::rounding_from(rptr.unwrap_or_default(), malachite::base::rounding_modes::RoundingMode::Down).0);
 							return if alt {
 								Ok(HardQuit(u))
 							}
@@ -952,15 +994,14 @@ pub unsafe fn interpreter(
 										},
 										b'p' => {	//print stack
 											for v in &st.mstk {
-												let vs = v.display(st.params.get_k(), st.params.get_o(), st.params.get_m(), alt);
+												let mut vs = v.display(st.params.get_k(), st.params.get_o(), st.params.get_m(), alt);
+												vs.push('\n');
 												if let Some(s) = &mut pbuf {
 													s.push_str(&vs);
-													s.push('\n');
 												}
 												else {
 													let mut lock = io.lock().unwrap();
-													writeln!(lock.1, "{}", vs)?;
-													lock.1.flush()?;
+													lock.print(vs)?;
 													drop(lock);
 												}
 											}
@@ -1147,7 +1188,7 @@ pub unsafe fn interpreter(
 									st.dedup();
 								},
 								b"clhist" => {
-									io.lock().unwrap().0.clear_history();
+									io.lock().unwrap().clear_history();
 								},
 								b"clpar" => {
 									st.params = ParamStk::default();
@@ -1620,7 +1661,7 @@ pub unsafe fn interpreter(
 								},
 								(false, true) => {	//non-empty normal
 									ipart.reverse();	//malachite needs reverse order
-									r = Rational::from_digits(&ibase, ipart, RationalSequence::from_vecs(fpart, rpart));
+									r = Rational::from_digits(&ibase, ipart, malachite::base::foer_sequences::FoerSequence::from_vecs(fpart, rpart));
 									if alt {r.neg_assign();}	//negative sign was set using alt
 								},
 								(false, false) => {	//non-empty factoradic

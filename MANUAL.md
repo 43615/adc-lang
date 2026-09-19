@@ -85,7 +85,7 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 - For the above printing commands, prefixing `` ` `` will print `[brackets]` around strings.
 - `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
 - `_clhist` clears the input history. Does nothing if no history is implemented.
-- **CLI:** uses the IO streams of the process, input uses an additional [line editor ⎋](https://crates.io/crates/linefeed) when running interactively in a supported terminal. The library may be attached to other streams using a generic `std::io` interface.
+- **CLI:** uses the IO streams of the process, input uses an additional [line editor ⎋](https://crates.io/crates/linefeed) when running interactively in a supported terminal. The library may be attached to other streams using a generic interface.
 
 
 # Numbers
@@ -197,6 +197,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `5`: hyperbolic cosine
   - `6`: hyperbolic tangent
   - Negative *b*: corresponding inverse functions
+  - `0`: identity (still converts through `NF`)
 
 
 # Booleans

@@ -42,7 +42,7 @@ Long and short flags are interchangeable. Short flags may not be merged: `-ie` i
 	`-l|--load <path>` loads a state file, without creating or modifying it.
 
 	These can be combined with instructions, which will perform them as part of the sequence.
-	This CLI tries to open all files specified with `-f`/`-s`/`-l` immediately, before any ADC code runs. Avoid concurrent access.
+	This CLI tries to open all files specified with `-f`/`-s`/`-l` immediately, before any ADC code runs. Does not acquire exclusive locks, so beware of concurrent operations.
 
 	-----------
 	IO/OS MODES
@@ -52,7 +52,7 @@ Long and short flags are interchangeable. Short flags may not be merged: `-ie` i
 	`-d|--debug`: Debug mode, logs every executed command to stderr.
 	`-q|--quiet`: Quiet mode, suppresses all errors (disables stderr).
 		Debug and Quiet are mutually exclusive. Also controllable with in-language commands, these just set the default for every instruction.
-	`-t|--tee <path>` writes a copy of all IO streams to a file (append-only access). May only be used once.
+	`-t|--tee <path>` writes a copy of all IO streams to a file (opened in append mode). May only be used once.
 
 	-----
 	OTHER
@@ -152,30 +152,7 @@ fn main() -> ExitCode {
 		})
 	}
 
-	let mut io = IOStreams::process();
-	struct TeeReader(Box<dyn ReadLine + Send>, File);
-	impl ReadLine for TeeReader {
-		fn read_line(&mut self) -> std::io::Result<String> {
-			let mut s = self.0.read_line()?;
-			s.push('\n');
-			self.1.write_all(s.as_bytes()).map(|_| s)
-		}
-
-		fn clear_history(&mut self) {
-			self.0.clear_history()
-		}
-	}
-	struct TeeWriter(Box<dyn Write + Send>, File);
-	impl Write for TeeWriter {
-		fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-			self.1.write_all(buf)?;
-			self.0.write(buf)
-		}
-
-		fn flush(&mut self) -> std::io::Result<()> {
-			self.0.flush()
-		}
-	}
+	let mut io: Option<Arc<Mutex<dyn IOStreams>>> = None;
 
 	//parse tokens into actions + open files, already performs `--help` and `--version`
 	let mut args = args.iter().peekable();
@@ -268,27 +245,10 @@ fn main() -> ExitCode {
 					if let Some(Plain(_)) = args.peek() {
 						return syntax_error("Tee option may only have one argument".into());
 					}
-					io.0 = Box::new(TeeReader(
-						io.0,
-						match try_appending_fd(file) {
-							Ok(fd) => {fd}
-							Err(e) => {return e;}
-						}
-					));
-					io.1 = Box::new(TeeWriter(
-						io.1,
-						match try_appending_fd(file) {
-							Ok(fd) => {fd}
-							Err(e) => {return e;}
-						}
-					));
-					io.2 = Box::new(TeeWriter(
-						io.2,
-						match try_appending_fd(file) {
-							Ok(fd) => {fd}
-							Err(e) => {return e;}
-						}
-					));
+					match try_appending_fd(file) {
+						Ok(fd) => {io = Some(Arc::new(Mutex::new(TeeProcessIO::new(fd))));}
+						Err(e) => {return e;}
+					}
 				}
 				else {
 					return syntax_error("Tee option needs a file path".into());
@@ -325,7 +285,7 @@ fn main() -> ExitCode {
 
 	//init state structs
 	let mut st = State::default();
-	let io = Arc::new(Mutex::new(io));
+	let io = io.unwrap_or_else(|| Arc::new(Mutex::new(ProcessIO::default())));
 	let mut exit_code = 0;
 
 	'act: for act in acts {
@@ -334,9 +294,8 @@ fn main() -> ExitCode {
 			Inter(prompt) => {
 				'repl: loop {
 					let mut lock = io.lock().unwrap();
-					if let Err(c) = lock.1.write_all(prompt.as_bytes()).map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
-					if let Err(c) = lock.1.flush().map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
-					let mut input = lock.0.read_line().map_err(|e| e.kind());
+					if let Err(c) = lock.print(prompt.clone()).map_err(|e| runtime_error(format!("Interactive mode IO error: {e}"))) {return c;}
+					let mut input = lock.read_line().map_err(|e| e.kind());
 					drop(lock);
 
 					if input == Err(ErrorKind::UnexpectedEof) {input = Ok(String::new())};	//replace with empty string
