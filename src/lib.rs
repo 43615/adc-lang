@@ -24,7 +24,7 @@ use std::ops::Neg;
 use std::panic::catch_unwind;
 use std::ptr::NonNull;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
+use std::sync::{Arc, LazyLock, Mutex, mpsc::{Receiver, TryRecvError, RecvTimeoutError}};
 use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
@@ -119,12 +119,8 @@ pub trait IOStreams : Send {
 	fn eprint(&mut self, buf: String) -> std::io::Result<()>;
 }
 
-/// Dummy IO streams that do nothing
-pub struct EmptyIO(std::io::Empty);
-impl Default for EmptyIO {
-	fn default() -> Self { Self(std::io::empty()) }
-}
-impl IOStreams for EmptyIO {
+/// `()` can be used as a placeholder that doesn't do anything, like [`std::io::Empty`].
+impl IOStreams for () {
 	fn read_line(&mut self) -> std::io::Result<String> { Ok(String::new()) }
 	fn clear_history(&mut self) {}
 	fn print(&mut self, _buf: String) -> std::io::Result<()> { Ok(()) }
@@ -132,14 +128,14 @@ impl IOStreams for EmptyIO {
 }
 
 /// Attach to the IO streams of the process, input includes a [line editor](linefeed) where supported
-pub struct ProcessIO (
+pub struct ProcessIO(
 	Box<dyn ReadLine + Send>,
 	std::io::Stdout,
 	std::io::Stderr
 );
 impl Default for ProcessIO {
 	fn default() -> Self {
-		Self (
+		Self(
 			input_stream(),
 			std::io::stdout(),
 			std::io::stderr()
@@ -162,10 +158,10 @@ impl IOStreams for ProcessIO {
 	}
 }
 
-/// [`ProcessIO`] but saving all IO contents to a file
+/// [`ProcessIO`], but logs all IO contents to a file
 pub struct TeeProcessIO(ProcessIO, File);
 impl TeeProcessIO {
-	/// File should be opened with append access
+	/// File should have append access
 	pub fn new(fd: File) -> Self { Self(ProcessIO::default(), fd) }
 }
 impl IOStreams for TeeProcessIO {
@@ -189,9 +185,7 @@ impl IOStreams for TeeProcessIO {
 	}
 }
 
-lazy_static::lazy_static! {
-	pub(crate) static ref RE_CACHE: RegexCache = RegexCache::default();
-}
+pub(crate) static RE_CACHE: LazyLock<RegexCache> = LazyLock::new(RegexCache::default);
 
 fn rng_preset(bytes: [u8; 32]) -> RandomPrimitiveInts<u64> {
 	malachite::base::num::random::random_primitive_ints(malachite::base::random::Seed::from_bytes(bytes))
@@ -333,7 +327,7 @@ pub fn interpreter_simple(
 	kill: Option<&Receiver<()>>
 ) -> std::io::Result<ExecResult>
 {
-	let no_io = Arc::new(Mutex::new(EmptyIO::default()));
+	let no_io = Arc::new(Mutex::new(()));
 	interpreter_no_os(st, start, no_io, LogLevel::Quiet, kill)
 }
 
@@ -363,7 +357,7 @@ pub unsafe fn interpreter_no_io(
 	restrict: bool
 ) -> std::io::Result<ExecResult>
 {
-	let no_io = Arc::new(Mutex::new(EmptyIO::default()));
+	let no_io = Arc::new(Mutex::new(()));
 	unsafe { interpreter(st, start, no_io, LogLevel::Quiet, kill, restrict) }
 }
 

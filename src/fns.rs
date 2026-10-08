@@ -6,7 +6,8 @@ use std::collections::VecDeque;
 use std::ptr::NonNull;
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
-use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal};
+use malachite::base::rounding_modes::RoundingMode;
+use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal, RoundToMultiple};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value::{self, *};
@@ -456,12 +457,21 @@ dya!(modu
 		}
 	},
 
-	N(ra), N(rb), _ => {	//modulo
+	N(ra), N(rb), false => {	//modulo
 		if *rb == Rational::ZERO {	//undefined
 			Err(Arith("Reduction mod 0".into()))
 		}
 		else {
 			Ok(N(ra.mod_op(rb)))
+		}
+	},
+
+	N(ra), N(rb), true => {	//round to multiple
+		if *rb == Rational::ZERO {	//undefined
+			Err(Arith("Rounding to multiple of 0".into()))
+		}
+		else {
+			Ok(N(ra.round_to_multiple(rb, RoundingMode::Nearest).0))
 		}
 	},
 

@@ -42,7 +42,6 @@ Long and short flags are interchangeable. Short flags may not be merged: `-ie` i
 	`-l|--load <path>` loads a state file, without creating or modifying it.
 
 	These can be combined with instructions, which will perform them as part of the sequence.
-	This CLI tries to open all files specified with `-f`/`-s`/`-l` immediately, before any ADC code runs. Does not acquire exclusive locks, so beware of concurrent operations.
 
 	-----------
 	IO/OS MODES
@@ -53,6 +52,7 @@ Long and short flags are interchangeable. Short flags may not be merged: `-ie` i
 	`-q|--quiet`: Quiet mode, suppresses all errors (disables stderr).
 		Debug and Quiet are mutually exclusive. Also controllable with in-language commands, these just set the default for every instruction.
 	`-t|--tee <path>` writes a copy of all IO streams to a file (opened in append mode). May only be used once.
+	This CLI tries to open all files specified with `-f`/`-s`/`-l`/`-t` immediately, before any ADC code runs. Does not acquire exclusive locks, so beware of concurrent operations.
 
 	-----
 	OTHER
@@ -77,31 +77,29 @@ fn main() -> ExitCode {
 		Plain(String)
 	}
 	use Argument::*;
+	const SHORT: phf::Set<&'static [u8]> = phf::phf_set! {
+		b"inter", b"exec", b"file", b"save", b"load", b"restrict", b"debug", b"quiet", b"tee", b"help", b"version"
+	};
+	debug_assert!(	//all first chars are different
+		SHORT.iter().map(|s| s[0]).enumerate().all(|(i, a)|
+			SHORT.iter().map(|s| s[0]).skip(i+1).all(|b| a!=b)
+		)
+	);
 
 	let mut args = Vec::new();
 
-	//normalize and parse cli args into tokens
+	//normalize and parse cli args
 	for arg in std::env::args().skip(1) {
 		if let Some(flag) = arg.strip_prefix('-') {
 			if let Some(long) = flag.strip_prefix('-') {	//long-form flags:
 				if long.is_empty() { return syntax_error("Empty flag: --".into()); }
 				args.push(Flag(
 					//reduce long-form flags
-					match long {
-						"inter" => 'i',
-						"exec" => 'e',
-						"file" => 'f',
-						"save" => 's',
-						"load" => 'l',
-						"restrict" => 'r',
-						"debug" => 'd',
-						"quiet" => 'q',
-						"tee" => 't',
-						"help" => 'h',
-						"version" => 'v',
-						_ => {
-							return syntax_error(format!("Unrecognized flag: --{long}"));
-						}
+					if SHORT.contains(long.as_bytes()) {
+						long.as_bytes()[0] as char
+					}
+					else {
+						return syntax_error(format!("Unrecognized flag: --{long}"));
 					}
 				));
 			}
@@ -183,10 +181,10 @@ fn main() -> ExitCode {
 				}
 			}
 			Flag('f') => {
-				while let Some(Plain(file)) = args.peek() {	//consume following args as filenames
+				while let Some(Plain(path)) = args.peek() {	//consume following args as filenames
 					args.next();
 					acts.push(Script(
-						match try_reading_fd(file) {
+						match try_reading_fd(path) {
 							Ok(fd) => {fd}
 							Err(e) => {return e;}
 						}
@@ -195,13 +193,13 @@ fn main() -> ExitCode {
 			}
 
 			Flag('s') => {
-				if let Some(Plain(file)) = args.peek() {	//consume one arg as filename
+				if let Some(Plain(path)) = args.peek() {	//consume one arg as filename
 					args.next();
 					if let Some(Plain(_)) = args.peek() {
 						return syntax_error("Save option may only have one argument".into());
 					}
 					acts.push(Save(
-						match try_writing_fd(file) {
+						match try_writing_fd(path) {
 							Ok(fd) => {fd}
 							Err(e) => {return e;}
 						}
@@ -212,13 +210,13 @@ fn main() -> ExitCode {
 				}
 			}
 			Flag('l') => {
-				if let Some(Plain(file)) = args.peek() {	//consume one arg as filename
+				if let Some(Plain(path)) = args.peek() {	//consume one arg as filename
 					args.next();
 					if let Some(Plain(_)) = args.peek() {
 						return syntax_error("Load option may only have one argument".into());
 					}
 					acts.push(Load(
-						match try_reading_fd(file) {
+						match try_reading_fd(path) {
 							Ok(fd) => {fd}
 							Err(e) => {return e;}
 						}
@@ -240,12 +238,12 @@ fn main() -> ExitCode {
 			}
 			Flag('t') if !tee => {
 				tee = true;
-				if let Some(Plain(file)) = args.peek() {	//consume one arg as filename
+				if let Some(Plain(path)) = args.peek() {	//consume one arg as filename
 					args.next();
 					if let Some(Plain(_)) = args.peek() {
 						return syntax_error("Tee option may only have one argument".into());
 					}
-					match try_appending_fd(file) {
+					match try_appending_fd(path) {
 						Ok(fd) => {io = Some(Arc::new(Mutex::new(TeeProcessIO::new(fd))));}
 						Err(e) => {return e;}
 					}

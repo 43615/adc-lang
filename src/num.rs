@@ -113,7 +113,7 @@ pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<N
 	else if k >= ipart.len()+fpart.len() {	//not all recurring digits fit
 		//move the digits that fit into fractionals
 		rpart.truncate(1 + k - (ipart.len()+fpart.len()));
-		let next = fpart.pop().unwrap();	//first discarded digit
+		let next = rpart.pop().unwrap();	//first discarded digit
 		fpart.append(&mut rpart);
 		let ord = (next * Natural::TWO).cmp(o);
 		if ord != Less {	//round remaining digits if next >= ceil(o/2)

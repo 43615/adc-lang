@@ -1008,7 +1008,7 @@ impl From<ParamStk> for Vec<Params> {
 /// - `state.clear_vals();` instead of `state = State::default();`
 /// - `state.replace_vals(other);` instead of `state = other;`
 ///
-/// The "interpreter(...)" methods are just an alternative syntax for the functions in the [crate root](crate).
+/// The "interpreter(...)" methods are just an alternative syntax for the functions in the [crate root](crate#functions).
 #[derive(Default, Debug, Clone)]
 pub struct State {
 	/// Main stack, [`Arc`] to allow shallow copies

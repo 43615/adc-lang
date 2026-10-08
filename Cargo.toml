@@ -1,6 +1,6 @@
 [package]
 name = "adc-lang"
-version = "0.2.14"
+version = "0.2.15"
 edition = "2024"
 repository = "https://github.com/43615/adc-lang"
 description = "Array-oriented reimagining of dc, a terse RPN esolang"
@@ -12,12 +12,11 @@ license = "Unlicense"
 no_os = []
 
 [dependencies]
-malachite = { version = "=0.11.0", features = ["32_bit_limbs", "random"] }
+malachite = { version = "=0.13.0", features = ["32_bit_limbs", "random"] }
 bitvec = "=1.1.1"
 getrandom = { version = "=0.4.3", features = ["std"] }
 const_format = "=0.2.36"
 regex = "=1.13.1"
-lazy_static = "=1.5.0"
 phf = { version = "=0.14.0", features = ["macros"] }
 linefeed = "=0.6.0"
 

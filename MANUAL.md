@@ -135,7 +135,7 @@ ADC also supports the [factorial/factoradic number system ⎋](https://en.wikipe
 ## Parameters
 
 These are the options for controlling number I/O operations:
-- `NPa k` sets the output precision. This limits the amount of displayed significant digits, with no effect on calculations. The default value of 0 means no limit.
+- `NPa k` sets the output precision. This limits the amount of displayed significant digits, with no effect on calculations. The default value of 0 means no limit. Setting some limit is recommended when using ADC as a calculator, since exact representations in normal/scientific notation may be impractically long (possibly as many recurring digits as the value of the denominator).
   - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases ⎋](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
   - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater. This may give surprisingly incorrect results.
@@ -170,6 +170,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `Na Nb G → NFz`: Base-*b* logarithm of *a*. Errors if *a* ≤ 0 or *b* = 1.
   - `Na Nb G → NZz`: Exact logarithm if *a* is an integer power of *b*.
 - `Na Nb % → Nz`: *a* modulo *b*. *z* has the same sign as *b*. Errors if *b* = 0.
+  - `` Na Nb `% → Nz ``: *a* rounded to the nearest multiple of *b* (ties to even). Errors if *b* = 0.
 - `Na Nb ~ → (NZy Nz)`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
 - `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
 - `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
@@ -187,7 +188,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `alpha`: Second Feigenbaum constant (α)
   - `epsilon`: [Machine epsilon ⎋](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats. 1+ε is the next representable float after 1.
   - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
-- `NNa N → NNz` generates a random natural number below *a* with a uniform distribution. RNG is seeded from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance.
+- `NNa N → NNz` generates a random natural number less than *a* with a uniform distribution. RNG is seeded with 256 bits from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
 - `NFa NZb t → NFz`: Monadic trigonometric/hyperbolic functions of *a* (angles in radians), selected by *b*:
   - `1`: sine
