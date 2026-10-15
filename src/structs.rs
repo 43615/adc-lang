@@ -8,6 +8,7 @@ use std::thread::JoinHandle;
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
 use malachite::base::num::basic::traits::{Zero, One};
+use malachite::base::num::random::RandomPrimitiveInts;
 use regex::{Regex, RegexBuilder};
 use crate::{ExecResult, IOStreams, LogLevel};
 pub use crate::errors::Utf8Error;
@@ -1018,8 +1019,12 @@ pub struct State {
 	pub regs: RegStore,
 
 	/// Parameters
-	pub params: ParamStk
+	pub params: ParamStk,
+
+	/// RNG state
+	pub rng: Option<RandomPrimitiveInts<u64>>
 }
+
 /// Exports to state file with standard format
 impl Display for State {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -1089,6 +1094,36 @@ impl State {
 				}
 			}
 		}
+	}
+
+	fn rng_preset(bytes: [u8; 32]) -> RandomPrimitiveInts<u64> {
+		malachite::base::num::random::random_primitive_ints(malachite::base::random::Seed::from_bytes(bytes))
+	}
+
+	fn rng_os() -> RandomPrimitiveInts<u64> {
+		let mut bytes = [0u8; 32];
+		getrandom::fill(&mut bytes).unwrap();
+		State::rng_preset(bytes)
+	}
+
+	/// Seed RNG with an initial value
+	pub fn seed_rng_preset(&mut self, bytes: [u8; 32]) {
+		self.rng = Some(Self::rng_preset(bytes));
+	}
+
+	/// Seed RNG from [an OS source](getrandom#supported-targets)
+	pub fn seed_rng_os(&mut self) {
+		self.rng = Some(Self::rng_os());
+	}
+
+	/// Clear RNG state, the next `N` command will seed it from the OS
+	pub const fn reset_rng(&mut self) {
+		self.rng = None;
+	}
+
+	/// Access RNG, or seed it from the OS
+	pub fn get_rng_or_seed(&mut self) -> &mut RandomPrimitiveInts<u64> {
+		self.rng.get_or_insert_with(Self::rng_os)
 	}
 	
 	#[expect(clippy::missing_safety_doc)]

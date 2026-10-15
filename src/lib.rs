@@ -31,7 +31,6 @@ use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{Factorial, NegAssign, Pow};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One, Two};
 use malachite::base::num::conversion::traits::{PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
-use malachite::base::num::random::RandomPrimitiveInts;
 use crate::errors::TypeLabel;
 
 
@@ -186,16 +185,6 @@ impl IOStreams for TeeProcessIO {
 }
 
 pub(crate) static RE_CACHE: LazyLock<RegexCache> = LazyLock::new(RegexCache::default);
-
-fn rng_preset(bytes: [u8; 32]) -> RandomPrimitiveInts<u64> {
-	malachite::base::num::random::random_primitive_ints(malachite::base::random::Seed::from_bytes(bytes))
-}
-
-fn rng_os() -> RandomPrimitiveInts<u64> {
-	let mut bytes = [0u8; 32];
-	getrandom::fill(&mut bytes).unwrap();
-	rng_preset(bytes)
-}
 
 #[derive(Default, Debug, Clone, Copy, Hash)]
 enum Command {
@@ -463,8 +452,6 @@ pub unsafe fn interpreter(
 	}
 
 	let mut rptr: Option<Rational> = None;	//global scope to allow setting by a macro
-
-	let mut rng: Option<RandomPrimitiveInts<u64>> = None;
 
 	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::ONE)];
 
@@ -1017,9 +1004,8 @@ pub unsafe fn interpreter(
 										Value::N(r) => {
 											match Natural::try_from(r) {
 												Ok(n) => {
-													push!(Value::N(Rational::from(
-														malachite::natural::random::get_random_natural_less_than(rng.get_or_insert_with(rng_os), &n)
-													)));
+													let res = malachite::natural::random::get_random_natural_less_than(st.get_rng_or_seed(), &n);
+													push!(Value::N(Rational::from(res)));
 												},
 												_ => {
 													st.mstk.push(va);
@@ -1039,14 +1025,14 @@ pub unsafe fn interpreter(
 										Value::N(r) => {
 											match Integer::try_from(r) {
 												Ok(Integer::NEGATIVE_ONE) => {	//return to os seed (lazy init)
-													rng = None;
+													st.reset_rng();
 												},
 												Ok(i) if let Ok(n) = Natural::try_from(&i) => {	//custom seed
 													let mut bytes: Vec<u8> = PowerOf2DigitIterable::<u8>::power_of_2_digits(&n, 8).take(32).collect();
 													bytes.resize(32, 0);
-													rng = Some(rng_preset(
+													st.seed_rng_preset(
 														unsafe { <[u8; 32]>::try_from(bytes).unwrap_unchecked() }
-													));
+													);
 												},
 												_ => {
 													st.mstk.push(va);

@@ -8,7 +8,8 @@ use bitvec::prelude::*;
 use malachite::{Natural, Rational};
 use malachite::base::rounding_modes::RoundingMode;
 use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal, RoundToMultiple};
-use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
+use malachite::base::num::comparison::traits::PartialOrdAbs;
+use malachite::base::num::basic::traits::{NegativeOne, Zero, OneHalf, One};
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value::{self, *};
 use crate::conv::*;
@@ -467,7 +468,7 @@ dya!(modu
 	},
 
 	N(ra), N(rb), true => {	//round to multiple
-		if *rb == Rational::ZERO {	//undefined
+		if *rb == Rational::ZERO && ra.gt_abs(&Rational::ONE_HALF) {	//undefined
 			Err(Arith("Rounding to multiple of 0".into()))
 		}
 		else {

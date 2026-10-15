@@ -170,7 +170,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `Na Nb G → NFz`: Base-*b* logarithm of *a*. Errors if *a* ≤ 0 or *b* = 1.
   - `Na Nb G → NZz`: Exact logarithm if *a* is an integer power of *b*.
 - `Na Nb % → Nz`: *a* modulo *b*. *z* has the same sign as *b*. Errors if *b* = 0.
-  - `` Na Nb `% → Nz ``: *a* rounded to the nearest multiple of *b* (ties to even). Errors if *b* = 0.
+  - `` Na Nb `% → Nz ``: *a* rounded to the nearest integer multiple of *b* (ties to even). Errors if *b* = 0 and |*a*| > ½.
 - `Na Nb ~ → (NZy Nz)`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
 - `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
 - `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
@@ -188,7 +188,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `alpha`: Second Feigenbaum constant (α)
   - `epsilon`: [Machine epsilon ⎋](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats. 1+ε is the next representable float after 1.
   - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
-- `NNa N → NNz` generates a random natural number less than *a* with a uniform distribution. RNG is seeded with 256 bits from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand and remains for one interpreter instance.
+- `NNa N → NNz` generates a random natural number less than *a* with a uniform distribution. RNG is seeded with 256 bits from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
 - `NFa NZb t → NFz`: Monadic trigonometric/hyperbolic functions of *a* (angles in radians), selected by *b*:
   - `1`: sine
