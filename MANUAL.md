@@ -64,7 +64,7 @@ The reliance on stacks for storing data naturally leads to a postfix operator or
 
 The "pure" commands that only ever touch the annotated inputs and outputs are called "arithmetic functions", including those that operate on booleans/strings. Other commands behave in ways not shown by this syntax.
 
-Arithmetic functions can be monadic, dyadic, or triadic (take 1, 2, or 3 arguments from the stack) and return one resulting value.
+Arithmetic functions can be monadic, dyadic, or triadic (take 1, 2, or 3 arguments from the stack) and return one or two resulting values.
 
 Commands with register access take the next command character as the register index, unless the register pointer is set.
 
@@ -126,7 +126,7 @@ These are equally correct ways of expressing a number, as inputting them back wo
 ADC also supports the [factorial/factoradic number system ⎋](https://en.wikipedia.org/wiki/Factorial_number_system), accessible as "base 1".
 - Since the digits can be arbitrarily large, factoradic numbers use the same `'enclosed'` format as bases above 36.
 - Although factoradic representations are not canonically defined or used for negative values, ADC allows negation of the whole number with the usual `` ` ``.
-- The place values are extended to fractionals in the canonical manner. Redundant places (0!, 1/0!, 1/1!) are omitted. The resulting place values are `... 120 24 6 2 1.1/2 1/6 1/24 1/120 ...`, and the highest possible digits are `... 5 4 3 2 1.1 2 3 4 ...`.
+- The place values are extended to fractionals in the canonical manner. Redundant places (0!, 1/0!, 1/1!) are omitted. The resulting place values are `… 120 24 6 2 1.1/2 1/6 1/24 1/120 …`, and the highest possible digits are `… 5 4 3 2 1.1 2 3 4 …`.
 - Since all rational numbers have a finite factoradic representation, no recurring digits are ever output or accepted in input (computing the value of nonzero recurring digits wouldn't terminate, approaching irrationals).
 - The scientific and fractional output modes are not really useful for working with factoradics. They are not used in automatic mode, but may still be selected manually. Scientific notation displaces the significand, which doesn't correspond do a simple multiplication/division for factoradics.
 - As with bases above 36, numbers without apostrophes are interpreted as decimal.
@@ -171,7 +171,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `Na Nb G → NZz`: Exact logarithm if *a* is an integer power of *b*.
 - `Na Nb % → Nz`: *a* modulo *b*. *z* has the same sign as *b*. Errors if *b* = 0.
   - `` Na Nb `% → Nz ``: *a* rounded to the nearest integer multiple of *b* (ties to even). Errors if *b* = 0 and |*a*| > ½.
-- `Na Nb ~ → (NZy Nz)`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
+- `Na Nb ~ → NZy Nz`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
 - `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
 - `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
   - `` `< `` / `` `= `` / `` `> `` are total orders, returning `F` instead of erroring if the types are different.
@@ -188,8 +188,8 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `alpha`: Second Feigenbaum constant (α)
   - `epsilon`: [Machine epsilon ⎋](https://en.wikipedia.org/wiki/Machine_epsilon) for 64-bit floats. 1+ε is the next representable float after 1.
   - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
-- `NNa N → NNz` generates a random natural number less than *a* with a uniform distribution. RNG is seeded with 256 bits from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on demand.
-  - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's seeded from the OS again.
+- `NNa N → NNz` generates a random natural number less than *a* with a uniform distribution. RNG is seeded with 256 bits from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on first use.
+  - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's reset to be seeded from the OS again.
 - `NFa NZb t → NFz`: Monadic trigonometric/hyperbolic functions of *a* (angles in radians), selected by *b*:
   - `1`: sine
   - `2`: cosine
@@ -219,7 +219,7 @@ Operations on booleans are overloaded variants of arithmetic functions:
 - `Ba g → NPz`: length of *a*.
 - `Ba Bb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (*z* = length + 1).
 - `Ba NPb % → BBz`: *b*th bit of *a*.
-- `Ba NPb ~ → (By Bz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
+- `Ba NPb ~ → By Bz` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
 - `Xa Yb BBc | → Zz` selects *a* if *c* = `T`, or *b* if *c* = `F`.
   - `Xa Yb Bc | → Az` makes an array of copies of *a* or *b* for every bit in *c*.
 - `Ba Bb < → BBz` / `Ba Bb = → BBz` / `Ba Bb > → BBz`: comparisons of booleans. Binary value comparison if lengths are equal, length comparison otherwise.
@@ -259,7 +259,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa Sb G → NPz` counts the occurrences of *b* in *a*. Empty *b* is found everywhere (*z* = length + 1).
   - `` Sa Sb `G → NPz `` counts the matches of regex *b* in *a*.
 - `Sa NPb % → SCz`: *b*th character of *a*.
-- `Sa NPb ~ → (Sy Sz)` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
+- `Sa NPb ~ → Sy Sz` splits *a* at position *b*. *y* has length *b*, *z* is the remainder.
 - `Sa Sb Sc | → Sz` replaces all occurrences of *b* in *a* with *c*. Empty *b* is found everywhere.
   - `` Sa Sb Sc `| → Sz `` replaces all matches of regex *b* in *a* with *c*. Replacement string syntax is documented [here ⎋](https://docs.rs/regex/latest/regex/struct.Regex.html#replacement-string-syntax).
 - `Sa Sb < → BBz` / `Sa Sb = → BBz` / `Sa Sb > → BBz`: comparisons of strings. Per-character comparison if lengths are equal, length comparison otherwise ("shortlex").

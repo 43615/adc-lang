@@ -13,6 +13,16 @@ use regex::{Regex, RegexBuilder};
 use crate::{ExecResult, IOStreams, LogLevel};
 pub use crate::errors::Utf8Error;
 
+fn rng_with(bytes: [u8; 32]) -> RandomPrimitiveInts<u64> {
+	malachite::base::num::random::random_primitive_ints(malachite::base::random::Seed::from_bytes(bytes))
+}
+
+fn rng_from_os() -> RandomPrimitiveInts<u64> {
+	let mut bytes = [0u8; 32];
+	getrandom::fill(&mut bytes).unwrap();
+	rng_with(bytes)
+}
+
 #[derive(Debug)]
 pub enum Value {
 	B(BitVec<u8, Lsb0>),
@@ -1059,7 +1069,7 @@ impl Display for State {
 	}
 }
 impl State {
-	/// Reallocates all fields to fit, does not discard any stored data
+	/// Reallocates all fields to fit, does not discard any stored data.
 	pub fn trim(&mut self) {
 		self.mstk.shrink_to_fit();
 		self.regs.trim();
@@ -1096,34 +1106,24 @@ impl State {
 		}
 	}
 
-	fn rng_preset(bytes: [u8; 32]) -> RandomPrimitiveInts<u64> {
-		malachite::base::num::random::random_primitive_ints(malachite::base::random::Seed::from_bytes(bytes))
-	}
-
-	fn rng_os() -> RandomPrimitiveInts<u64> {
-		let mut bytes = [0u8; 32];
-		getrandom::fill(&mut bytes).unwrap();
-		State::rng_preset(bytes)
-	}
-
 	/// Seed RNG with an initial value
-	pub fn seed_rng_preset(&mut self, bytes: [u8; 32]) {
-		self.rng = Some(Self::rng_preset(bytes));
+	pub fn seed_rng_with(&mut self, bytes: [u8; 32]) {
+		self.rng = Some(rng_with(bytes));
 	}
 
 	/// Seed RNG from [an OS source](getrandom#supported-targets)
-	pub fn seed_rng_os(&mut self) {
-		self.rng = Some(Self::rng_os());
+	pub fn seed_rng_from_os(&mut self) {
+		self.rng = Some(rng_from_os());
 	}
-
+	
 	/// Clear RNG state, the next `N` command will seed it from the OS
 	pub const fn reset_rng(&mut self) {
 		self.rng = None;
 	}
 
 	/// Access RNG, or seed it from the OS
-	pub fn get_rng_or_seed(&mut self) -> &mut RandomPrimitiveInts<u64> {
-		self.rng.get_or_insert_with(Self::rng_os)
+	pub fn get_rng_or_seed_from_os(&mut self) -> &mut RandomPrimitiveInts<u64> {
+		self.rng.get_or_insert_with(rng_from_os)
 	}
 	
 	#[expect(clippy::missing_safety_doc)]

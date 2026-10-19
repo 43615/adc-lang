@@ -57,6 +57,20 @@ macro_rules! tri {
 	}
 }
 
+/// Dyadic two-valued function definition
+pub type Dya2 = fn(&Value, &Value, bool) -> Result<(Value, Value), FnErr>;
+/// Dyadic two-valued template with standard type matching
+macro_rules! dya2 {
+    ($name:ident $($pa:pat, $pb:pat, $m:pat => $op:expr),*) => {
+		pub fn $name(a: &Value, b: &Value, m: bool) -> Result<(Value, Value), FnErr> {
+			match (a, b, m) {
+				$(($pa, $pb, $m) => $op,)*
+				_ => Err(Type2(a.into(), b.into()))
+			}
+		}
+	}
+}
+
 /// execute monadic fn, pseudorecursion through nested arrays
 pub fn exec1(f: Mon, a: &Value, m: bool) -> Result<Value, FnErr> {
 	if let A(aa) = a { unsafe {	//iterate through array, bfs without recursion
@@ -143,6 +157,42 @@ pub fn exec3(f: Tri, a: &Value, b: &Value, c: &Value, m: bool) -> Result<Value, 
 		}}
 		(_, _, _) => {	//just call function
 			f(a, b, c, m)
+		}
+	}
+}
+
+/// execute dyadic two-valued fn, pseudorecursion through nested arrays
+pub fn exec2_2(f: Dya2, a: &Value, b: &Value, m: bool) -> Result<(Value, Value), FnErr> {
+	match (a, b) {
+		(A(_), A(_)) | (A(_), _) | (_, A(_)) => { unsafe {	//iterate through array(s), bfs without recursion
+			//NonNull pointers are required because of aliasing rules, soundness is ensured manually
+			let mut ay: Vec<Value> = Vec::new();	//resulting arrays
+			let mut az: Vec<Value> = Vec::new();
+			#[expect(clippy::type_complexity)]
+			let mut q: VecDeque<(&Value, &Value, NonNull<Vec<Value>>, NonNull<Vec<Value>>)> = VecDeque::new();	//queue of source/destination arrays, scalar values in 0,1 get promoted later
+			q.push_back((a, b, (&mut ay).into(), (&mut az).into()));
+			while let Some((a, b, mut dst1, mut dst2)) = q.pop_front() {	//keep reading from front of queue
+				for (va, vb) in Promote2::try_from((a,b))? {
+					match (va, vb) {
+						(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//one or both elements are arrays
+							dst1.as_mut().push(A(Vec::new()));	//allocate destinations, mirroring the source's array nesting
+							dst2.as_mut().push(A(Vec::new()));
+							let A(ndst1) = dst1.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//get pointer to destinations
+							let A(ndst2) = dst2.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };
+							q.push_back((va, vb, ndst1.into(), ndst2.into()));	//add nested source and destination arrays to queue
+						}
+						(_, _) => {	//scalar value, compute and store results
+							let (res1, res2) = f(va, vb, m)?;
+							dst1.as_mut().push(res1);
+							dst2.as_mut().push(res2);
+						}
+					}
+				}
+			}
+			Ok((A(ay), A(az)))
+		}}
+		(_, _) => {	//just call function
+			f(a, b, m)
 		}
 	}
 }
@@ -488,14 +538,14 @@ dya!(modu
 );
 
 //   ~
-dya!(euc
+dya2!(euc
 	B(ba), N(rb), _ => {	//split boolean
 		let ub = r_u(rb)?;
 		let mut i = ba.iter();
-		Ok(A(vec![
+		Ok((
 			B(i.by_ref().take(ub).collect()),
 			B(i.collect())
-		]))
+		))
 	},
 
 	N(ra), N(rb), _ => {	//euclidean division
@@ -504,20 +554,20 @@ dya!(euc
 		}
 		else {
 			let rem = ra.mod_op(rb);
-			Ok(A(vec![
+			Ok((
 				N((ra - &rem) / rb),
 				N(rem)
-			]))
+			))
 		}
 	},
 
 	S(sa), N(rb), _ => {	//split string at char
 		let ub = r_u(rb)?;
 		let mut i = sa.chars();
-		Ok(A(vec![
+		Ok((
 			S(i.by_ref().take(ub).collect()),
 			S(i.collect())
-		]))
+		))
 	}
 );
 

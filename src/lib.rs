@@ -197,6 +197,9 @@ enum Command {
 	///triadic pure function
 	Fn3(fns::Tri),
 
+	///dyadic two-valued pure function
+	Fn2_2(fns::Dya2),
+
 	///impure command
 	Cmd(cmds::Cmd),
 
@@ -244,7 +247,7 @@ const CMDS: [Command; 128] = {
 		Exec,		Exec,		Wrong,		Cmd(cls),	Exec,		Wrong,		Exec,		Fn1(log),	Wrong,		Cmd(si),	ExecR,		Cmd(sk),	ExecR,		Cmd(sm),	Fn1(fac),	Cmd(so),
 
 		//p			q			r			s			t			u			v			w			x			y			z			{			|			}			~			DEL
-		Exec,		Exec,		Cmd(rev),	ExecR,		Fn2(trig),	Wrong,		Fn1(sqrt),	Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2(euc),	Wrong
+		Exec,		Exec,		Cmd(rev),	ExecR,		Fn2(trig),	Wrong,		Fn1(sqrt),	Exec,		Exec,		Wrong,		Fn1(disc),	Cmd(cbo),	Fn3(bar),	Cmd(cbc),	Fn2_2(euc),	Wrong
 	]
 };
 
@@ -600,6 +603,36 @@ pub unsafe fn interpreter(
 					}
 					else {
 						synerr!(b as char, "Expected 3 arguments, 0 given");
+					}
+				},
+				Fn2_2(dya2) => {
+					if let Some(vb) = st.mstk.pop() {
+						if let Some(va) = st.mstk.pop() {
+							debug!("Dyadic two-valued {}{} with ({}, {})", if alt {"alt-"} else {""}, b as char, TypeLabel::from(&*va), TypeLabel::from(&*vb));
+							match catch_unwind(|| fns::exec2_2(dya2, &va, &vb, alt)) {
+								Ok(Ok((vy, vz))) => {
+									push!(vy);
+									push!(vz);
+								},
+								Ok(Err(e)) => {
+									st.mstk.push(va);
+									st.mstk.push(vb);
+									valerr!(b as char, e.to_string());
+								},
+								Err(cause) => {
+									st.mstk.push(va);
+									st.mstk.push(vb);
+									valerr!(b as char, "Caught function panic: {:?}", cause);
+								}
+							}
+						}
+						else {
+							st.mstk.push(vb);
+							synerr!(b as char, "Expected 2 arguments, 1 given");
+						}
+					}
+					else {
+						synerr!(b as char, "Expected 2 arguments, 0 given");
 					}
 				},
 				Cmd(cmd) => {
@@ -1004,7 +1037,7 @@ pub unsafe fn interpreter(
 										Value::N(r) => {
 											match Natural::try_from(r) {
 												Ok(n) => {
-													let res = malachite::natural::random::get_random_natural_less_than(st.get_rng_or_seed(), &n);
+													let res = malachite::natural::random::get_random_natural_less_than(st.get_rng_or_seed_from_os(), &n);
 													push!(Value::N(Rational::from(res)));
 												},
 												_ => {
@@ -1030,7 +1063,7 @@ pub unsafe fn interpreter(
 												Ok(i) if let Ok(n) = Natural::try_from(&i) => {	//custom seed
 													let mut bytes: Vec<u8> = PowerOf2DigitIterable::<u8>::power_of_2_digits(&n, 8).take(32).collect();
 													bytes.resize(32, 0);
-													st.seed_rng_preset(
+													st.seed_rng_with(
 														unsafe { <[u8; 32]>::try_from(bytes).unwrap_unchecked() }
 													);
 												},
