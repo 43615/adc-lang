@@ -1829,11 +1829,9 @@ pub unsafe fn interpreter(
 									}
 								}
 							}
-							eprintln!("\t{bytes:?}");
 							if !discard {
 								match String::try_from(Utf8Iter::from(bytes)) {
 									Ok(s) => {
-										eprintln!("\t[{s}]");
 										push!(Value::S(s));
 									},
 									Err(e) => {

@@ -728,7 +728,7 @@ impl Utf8Iter<'_> {
 			Err(OutOfBounds(*pos, bytes.len()))
 		}
 	}
-
+	
 	/// Converts 1 or 2 [`Value`]s into a list of macros.
 	///
 	/// Nested array traversal using heap DFS with flattening. Value types should match the syntax in the ADC manual:
