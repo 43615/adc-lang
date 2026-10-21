@@ -850,8 +850,16 @@ impl Utf8Iter<'_> {
 			}
 		}
 	}
-	
+
 	pub(crate) fn is_finished(&self) -> bool {
+		let (bytes, pos): (&[u8], usize) = match self {
+			Self::Borrowed {bytes, pos} => (bytes, *pos),
+			Self::Owned {bytes, pos} => (bytes, *pos)
+		};
+		pos >= bytes.len()
+	}
+	
+	pub(crate) fn is_finished_trimmed(&self) -> bool {
 		let (bytes, mut pos): (&[u8], usize) = match self {
 			Self::Borrowed {bytes, pos} => (bytes, *pos),
 			Self::Owned {bytes, pos} => (bytes, *pos)

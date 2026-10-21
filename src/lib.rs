@@ -861,7 +861,7 @@ pub unsafe fn interpreter(
 											st.mstk.push(sec);
 										}
 
-										if *count == Natural::ONE && mac.is_finished() {	//tail call optimization: discard current macro if this is the last command
+										if *count == Natural::ONE && mac.is_finished_trimmed() {	//tail call optimization: discard current macro if this is the last command
 											call.pop();
 										}
 
@@ -1829,9 +1829,11 @@ pub unsafe fn interpreter(
 									}
 								}
 							}
+							eprintln!("\t{bytes:?}");
 							if !discard {
 								match String::try_from(Utf8Iter::from(bytes)) {
 									Ok(s) => {
+										eprintln!("\t[{s}]");
 										push!(Value::S(s));
 									},
 									Err(e) => {
