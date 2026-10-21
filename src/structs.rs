@@ -25,7 +25,7 @@ fn rng_from_os() -> RandomPrimitiveInts<u64> {
 
 #[derive(Debug)]
 pub enum Value {
-	B(BitVec<u8, Lsb0>),
+	B(BitVec<u8, Msb0>),
 	N(Rational),
 	S(String),
 	A(Vec<Value>)
@@ -852,11 +852,22 @@ impl Utf8Iter<'_> {
 	}
 	
 	pub(crate) fn is_finished(&self) -> bool {
-		let (bytes, pos): (&[u8], &usize) = match self {
-			Self::Borrowed {bytes, pos} => (bytes, pos),
-			Self::Owned {bytes, pos} => (bytes, pos)
+		let (bytes, mut pos): (&[u8], usize) = match self {
+			Self::Borrowed {bytes, pos} => (bytes, *pos),
+			Self::Owned {bytes, pos} => (bytes, *pos)
 		};
-		bytes.len() <= *pos
+		pos >= bytes.len()
+		||
+		loop {	//check if remainder is redundant
+			if matches!(crate::byte_cmd(bytes[pos]), crate::Command::Space) {
+				if bytes[pos] == b'#' {	//consume line comment
+					while let Some(b) = bytes.get(pos).copied() && b != b'\n' {pos += 1;}
+				}
+			}
+			else {break false;}	//non-whitespace found
+			pos += 1;
+			if pos >= bytes.len() {break true;}	//only whitespace found
+		}
 	}
 	
 	pub(crate) const fn back(&mut self) {

@@ -31,10 +31,10 @@ The basic units of data are called "values". Instead of the familiar concept of 
 All values have one of the following types:
 - Boolean: sequence of `T` (true) and `F` (false) bits
 - Number: rational, theoretically unbounded
-- String: sequence of characters, stored in UTF-8
+- String: sequence of Unicode characters, stored in UTF-8
 - Array: continuous list of values of any type, including other arrays
 
-Yes, this is not the usual meaning of "boolean". These are actually bit vectors of arbitrary length, which was chosen to align with the other types. You may call them "bitvecs" if it helps you sleep.
+Yes, this is not the usual meaning of "boolean". For the sake of brevity, I am not spelling out "boolean vector" every time.
 
 
 ## Type annotations and restricted types
@@ -242,7 +242,7 @@ Since nesting is required for any complex program, string input uses `[square br
 - `\e`: Escape (1B)
 - `\\`: Backslash itself (5C)
 - `\[` and `\]`: Unpaired square brackets (5B, 5D), not processed as string delimiters. These need to be escaped multiple (2ⁿ-1) times in nested strings, as one would do with quotes in other languages ("backslash explosion"). Example: Executing `[[[foo\\\\\\\]bar]]]` parses it into `[[foo\\\]bar]]`, then `[foo\]bar]` and finally `foo]bar` (as it would be printed).
-  - A nicer alternative is to use [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93 <TODO> +[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
+  - A nicer alternative is to use [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93A+[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
 - `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is rejected otherwise.
 
 Strings also use overloaded variants of arithmetic functions:
@@ -263,6 +263,14 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa Sb Sc | → Sz` replaces all occurrences of *b* in *a* with *c*. Empty *b* is found everywhere.
   - `` Sa Sb Sc `| → Sz `` replaces all matches of regex *b* in *a* with *c*. Replacement string syntax is documented [here ⎋](https://docs.rs/regex/latest/regex/struct.Regex.html#replacement-string-syntax).
 - `Sa Sb < → BBz` / `Sa Sb = → BBz` / `Sa Sb > → BBz`: comparisons of strings. Per-character comparison if lengths are equal, length comparison otherwise ("shortlex").
+
+
+# Type conversion
+
+- `Ba A → NNz` reads a boolean as an unsigned binary integer and converts it into a natural number.
+- `NNa A → Sz` reads a natural's bytes and converts them into a string, erroring if they don't form a valid UTF-8 sequence.
+- `Sa A → Bz` reads a string's bytes and concatenates them into a boolean.
+- `` `A `` performs all of these conversions in reverse.
 
 
 # Stack operations
@@ -308,8 +316,7 @@ Array input works by pushing any newly created values to a temporary buffer inst
 
 The scope of array input is limited to macro boundaries. The end of a macro implies sufficient closing `)`s.
 
-Array commands are digraphs beginning with `a`. Since they operate on whole arrays, the usual [polymorphism](#array-polymorphism) does not apply. Instead, nested arrays have be indexed into.
-
+Array commands are digraphs beginning with `a`. Since they operate on whole arrays, the usual [polymorphism](#array-polymorphism) does not apply. Instead, nested arrays have to be indexed into.
 
 ## Indexing
 
@@ -320,25 +327,21 @@ The valid forms of an array index (`NI`) are:
 
 ## Array commands
 
-- `(Xa) NIb , → (Xz)` extracts an element or range from *a* according to *b*.
+TODO
 
 
 # Registers
 
 Registers are auxiliary stacks, identified by rational indices. Commands that operate on registers are annotated with `⒭`, meaning that the command either takes the next command character as a register index (Unicode character value) or uses the "register pointer" if it's set.
-- `Xa :` sets the register pointer. Numbers are used literally, TODO: booleans and strings are [converted](#type-conversion) to an integer form (first bit/byte to most significant).
-  - `` `: → Nz`` reads and clears the pointer, `()` if unset.
+- `Xa :` sets the register pointer to be used once (and cleared) by a subsequent register command. Numbers are used as-is, booleans and strings are [converted](#type-conversion) to natural numbers.
+  - `` Xa `: `` sets it persistently. Only cleared when overwritten, removed with `_rptr`, or at the end of the interpreter instance.
+- `_rptr → Nz` reads and clears the pointer, `()` if unset.
 - `Xa s⒭` saves a value to a register, overwriting the top if it exists.
 - `Xa S⒭` pushes a value to a register.
 - `l⒭ → Xz` loads a value from a register, erroring if empty.
 - `L⒭ → Xz` pops a value from a register, erroring if empty.
 - `Z⒭ → NPz` returns the depth of a register.
 - `ff⒭` swaps the main stack with a register.
-
-
-# Type conversion
-
-TODO
 
 
 # Macros

@@ -687,10 +687,10 @@ oscmd!(exited, st {
 				if let Some(child) = unsafe { #[expect(static_mut_refs)] PIDS.get_mut(&pid) } {
 					match child.try_wait() {
 						Ok(Some(_)) => {
-							Ok(vec![Value::B(bitvec![u8, Lsb0; 1])])
+							Ok(vec![Value::B(bitvec![u8, Msb0; 1])])
 						},
 						Ok(None) => {
-							Ok(vec![Value::B(bitvec![u8, Lsb0; 0])])
+							Ok(vec![Value::B(bitvec![u8, Msb0; 0])])
 						},
 						Err(e) => {
 							st.mstk.push(va);

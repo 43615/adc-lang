@@ -8,8 +8,9 @@ use bitvec::prelude::*;
 use malachite::{Natural, Rational};
 use malachite::base::rounding_modes::RoundingMode;
 use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal, RoundToMultiple};
-use malachite::base::num::comparison::traits::PartialOrdAbs;
 use malachite::base::num::basic::traits::{NegativeOne, Zero, OneHalf, One};
+use malachite::base::num::comparison::traits::PartialOrdAbs;
+use malachite::base::num::conversion::traits::{PowerOf2Digits, PowerOf2DigitIterable};
 use crate::errors::FnErr::{self, *};
 use crate::structs::Value::{self, *};
 use crate::conv::*;
@@ -624,7 +625,7 @@ dya!(eq
 			Ok(B(bz))
 		}
 		else {
-			Ok(B(bitvec![u8, Lsb0; 0]))
+			Ok(B(bitvec![u8, Msb0; 0]))
 		}
 	},
 
@@ -641,7 +642,7 @@ dya!(eq
 	},
 
 	_, _, true => {	//total: false if types differ
-		Ok(B(bitvec![u8, Lsb0; 0]))
+		Ok(B(bitvec![u8, Msb0; 0]))
 	}
 );
 
@@ -669,7 +670,7 @@ dya!(lt
 	},
 
 	_, _, true => {	//total: false if types differ
-		Ok(B(bitvec![u8, Lsb0; 0]))
+		Ok(B(bitvec![u8, Msb0; 0]))
 	}
 );
 
@@ -695,9 +696,9 @@ dya!(gt
 		bz.push(str_cmp(sa, sb).is_gt());
 		Ok(B(bz))
 	},
-	
+
 	_, _, true => {	//total: false if types differ
-		Ok(B(bitvec![u8, Lsb0; 0]))
+		Ok(B(bitvec![u8, Msb0; 0]))
 	}
 );
 
@@ -752,5 +753,43 @@ dya!(trig
 			_ => { return Err(Arith(format!("Unknown function number {ib}"))); }
 		};
 		Ok(N(f_r(fun(r_f(ra)?))?))
+	}
+);
+
+mon!(conv
+	B(ba), false => {	//boolean to natural
+		Ok(N(
+			Rational::from(Natural::from_power_of_2_digits_desc(8, ba.rchunks(8).rev().map(|bs| bs.load_be::<u8>())).unwrap())
+		))
+	},
+
+	B(ba), true => {	//boolean to string
+		Ok(S(
+			crate::structs::Utf8Iter::from(ba.as_raw_slice()).try_into().map_err(Custom)?
+		))
+	},
+
+	N(ra), false => {	//natural to string
+		Ok(S(
+			crate::structs::Utf8Iter::from(r_n(ra)?.to_power_of_2_digits_desc(8)).try_into().map_err(Custom)?
+		))
+	},
+
+	N(ra), true => {	//natural to boolean
+		Ok(B(
+			BitVec::from_iter(PowerOf2DigitIterable::<u8>::power_of_2_digits(&r_n(ra)?, 8).rev())
+		))
+	},
+
+	S(sa), false => {	//string to boolean
+		Ok(B(
+			BitVec::from_slice(sa.as_bytes())
+		))
+	},
+
+	S(sa), true => {	//string to natural
+		Ok(N(
+			Rational::from(Natural::from_power_of_2_digits_desc(8, sa.bytes()).unwrap())
+		))
 	}
 );

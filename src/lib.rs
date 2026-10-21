@@ -238,7 +238,7 @@ const CMDS: [Command; 128] = {
 		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Lit,		Exec,		Wrong,		Fn2(lt),	Fn2(eq),	Fn2(gt),	Exec,
 
 		//@			A			B			C			D			E			F			G			H			I			J			K			L			M			N			O
-		Lit,		Wrong,		Wrong,		Cmd(cln),	Exec,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	ExecR,		Cmd(gk),	ExecR,		Cmd(gm),	Exec,		Cmd(go),
+		Lit,		Fn1(conv),	Wrong,		Cmd(cln),	Exec,		Wrong,		Lit,		Fn2(logb),	Wrong,		Cmd(gi),	ExecR,		Cmd(gk),	ExecR,		Cmd(gm),	Exec,		Cmd(go),
 
 		//P			Q			R			S			T			U			V			W			X			Y			Z			[			\			]			^			_
 		Exec,		Exec,		Exec,		ExecR,		Lit,		Wrong,		Fn2(root),	Exec,		ExecR,		Wrong,		ExecR,		Lit,		Wrong,		Wrong,		Fn2(pow),	Exec,
@@ -455,6 +455,7 @@ pub unsafe fn interpreter(
 	}
 
 	let mut rptr: Option<Rational> = None;	//global scope to allow setting by a macro
+	let mut rpersist = false;	//don't reset on usage
 
 	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::ONE)];
 
@@ -658,30 +659,26 @@ pub unsafe fn interpreter(
 							alt = true;
 							continue 'cmd;	//force digraph
 						},
-						b':' if !alt => {	//set register pointer
+						b':' => {	//set register pointer
 							if let Some(va) = st.mstk.pop() {
-								if let Value::N(r) = &*va {
-									rptr = Some(r.clone());
-								}
-								else {
-									let ta = TypeLabel::from(&*va);
-									st.mstk.push(va);
-									synerr!(':', "Expected a number, {} given", ta);
-								}
+								let v = match &*va {
+									Value::N(_) => &*va,
+									Value::B(_) => &fns::conv(&va, false).unwrap(),
+									Value::S(_) => &fns::conv(&va, true).unwrap(),
+									Value::A(_) => {
+										st.mstk.push(va);
+										synerr!(':', "Expected a scalar, array given");
+										alt = false;
+										continue 'cmd;
+									}
+								};
+								let Value::N(r) = v else {unreachable!()};
+								rptr = Some(r.clone());
+								rpersist = alt;
 							}
 							else {
 								synerr!(':', "Expected 1 argument, 0 given");
 							}
-						},
-						b':' if alt => {	//get register pointer
-							push!(
-								if let Some(ri) = rptr.take() {
-									Value::N(ri)
-								}
-								else {
-									Value::A(vec![])
-								}
-							);
 						},
 						b'd' => {
 							if let Some(v) = st.mstk.last() {
@@ -864,7 +861,7 @@ pub unsafe fn interpreter(
 											st.mstk.push(sec);
 										}
 
-										if mac.is_finished() && *count == Natural::ONE {	//tail call optimization: discard current macro if this is the last command
+										if *count == Natural::ONE && mac.is_finished() {	//tail call optimization: discard current macro if this is the last command
 											call.pop();
 										}
 
@@ -985,7 +982,7 @@ pub unsafe fn interpreter(
 											}
 										},
 										b'f' => {	//swap with reg
-											let ri = if let Some(r) = rptr.take() {r}
+											let ri = if let Some(r) = if rpersist {rptr.clone()} else {rptr.take()} {r}
 											else {
 												if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
 													synerr!('f', "No register index");
@@ -1177,6 +1174,12 @@ pub unsafe fn interpreter(
 										else { vec![] }
 									));
 								},
+								b"rptr" => {
+									rpersist = false;
+									push!(
+										if let Some(ri) = rptr.take() { Value::N(ri) } else { Value::A(vec![]) }
+									);
+								},
 								b"th" => {
 									push!(Value::S(th_name.clone()));
 								},
@@ -1257,7 +1260,7 @@ pub unsafe fn interpreter(
 					}
 				},
 				ExecR => {
-					let ri = if let Some(r) = rptr.take() {r}
+					let ri = if let Some(r) = if rpersist {rptr.clone()} else {rptr.take()} {r}
 					else {
 						if matches!(mac.next().map(|b| {mac.back(); byte_cmd(b)}), None | Some(Space)) {
 							synerr!(b as char, "No register index");

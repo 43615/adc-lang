@@ -77,13 +77,14 @@ fn main() -> ExitCode {
 		Plain(String)
 	}
 	use Argument::*;
-	const SHORT: phf::Set<&'static [u8]> = phf::phf_set! {
+	const LONG: phf::Set<&'static [u8]> = phf::phf_set! {
 		b"inter", b"exec", b"file", b"save", b"load", b"restrict", b"debug", b"quiet", b"tee", b"help", b"version"
 	};
-	debug_assert!(	//all first chars are different
-		SHORT.iter().map(|s| s[0]).enumerate().all(|(i, a)|
-			SHORT.iter().map(|s| s[0]).skip(i+1).all(|b| a!=b)
-		)
+	debug_assert!(
+		LONG.iter().map(|s| s[0]).enumerate().all(|(i, a)|
+			LONG.iter().map(|s| s[0]).skip(i+1).all(|b| a!=b)
+		),
+		"long flags don't have unique first chars"
 	);
 
 	let mut args = Vec::new();
@@ -95,7 +96,7 @@ fn main() -> ExitCode {
 				if long.is_empty() { return syntax_error("Empty flag: --".into()); }
 				args.push(Flag(
 					//reduce long-form flags
-					if SHORT.contains(long.as_bytes()) {
+					if LONG.contains(long.as_bytes()) {
 						long.as_bytes()[0] as char
 					}
 					else {
