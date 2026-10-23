@@ -5,9 +5,9 @@
 use std::collections::VecDeque;
 use std::ptr::NonNull;
 use bitvec::prelude::*;
-use malachite::{Natural, Rational};
+use malachite::{Natural, Integer, Rational};
 use malachite::base::rounding_modes::RoundingMode;
-use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal, RoundToMultiple};
+use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal, RoundToMultiple, Sign};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, OneHalf, One};
 use malachite::base::num::comparison::traits::PartialOrdAbs;
 use malachite::base::num::conversion::traits::{PowerOf2Digits, PowerOf2DigitIterable};
@@ -550,8 +550,13 @@ dya2!(euc
 	},
 
 	N(ra), N(rb), _ => {	//euclidean division
-		if *rb == Rational::ZERO {	//undefined
-			Err(Arith("Euclidean division by 0".into()))
+		if *rb == Rational::ZERO {	//undefined, split fraction instead
+			let sign = ra.sign().is_ge();
+			let (numer, denom) = ra.to_numerator_and_denominator();
+			Ok((
+				N(Integer::from_sign_and_abs(sign, numer).into()),
+				N(denom.into())
+			))
 		}
 		else {
 			let rem = ra.mod_op(rb);

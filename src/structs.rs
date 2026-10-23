@@ -947,7 +947,7 @@ impl ParamStk {
 			unsafe { self.0.last_mut().unwrap_unchecked().0 = u; }
 			Ok(())
 		}
-		else {Err(const_format::concatcp!("Output precision must be a natural number <={}", usize::MAX))}
+		else {Err(const_format::concatcp!("Output precision must be a natural number <=", usize::MAX))}
 	}
 
 	/// Checked edit of current input base

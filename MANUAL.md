@@ -90,7 +90,7 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 
 # Numbers
 
-This ADC interpreter uses the highly performant [Malachite ⎋](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base >=2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
+This ADC interpreter uses the highly performant [Malachite ⎋](https://www.malachite.rs/) library, specifically the `Rational` type (with 32-bit limbs). All numbers are stored as a (fully reduced) fraction of arbitrary-length integers. This means that numbers may hold arbitrary values, with memory usage proportional to the amount of digits. Another natural feature of using rationals is that recurring (periodic) fractional digits are supported inherently. In fact, for any natural base ≥2, the set of all non-redundant integer+fractional+recurring digit sequences is bijective to the rationals.
 
 Some of the available arithmetic functions are irrational-valued, implemented here using double-precision floating-point arithmetic (IEEE 754-2008 "binary64"). This places hard limits on the range and precision of the arguments and results of these functions. ±∞ and NaN results are not representable as rationals and will cause an error. As mentioned [above](#type-annotations-and-restricted-types), floating-point arguments and results are annotated as `NF`. Floating-point results are converted to the simplest rational in rounding range, as documented [here ⎋](https://docs.rs/malachite/latest/malachite/struct.Rational.html#method.try_from_float_simplest).
 
@@ -171,7 +171,8 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - `Na Nb G → NZz`: Exact logarithm if *a* is an integer power of *b*.
 - `Na Nb % → Nz`: *a* modulo *b*. *z* has the same sign as *b*. Errors if *b* = 0.
   - `` Na Nb `% → Nz ``: *a* rounded to the nearest integer multiple of *b* (ties to even). Errors if *b* = 0 and |*a*| > ½.
-- `Na Nb ~ → NZy Nz`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*. Errors if *b* = 0.
+- `Na Nb ~ → NZy Nz`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*.
+  - `Na 0 ~ → NZy NNz`: Split *a* into its signed numerator *y* and denominator *z*. Zero is represented as 0/1.
 - `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
 - `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
   - `` `< `` / `` `= `` / `` `> `` are total orders, returning `F` instead of erroring if the types are different.
