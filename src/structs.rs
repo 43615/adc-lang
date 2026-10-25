@@ -250,7 +250,7 @@ impl ThreadHandle {
 				match krx.try_recv() {	//check if kill signal arrived after finishing
 					Ok(()) => { true },
 					Err(TryRecvError::Empty) => { false },
-					Err(TryRecvError::Disconnected) => { unreachable!() }	//parent should never disconnect
+					Err(TryRecvError::Disconnected) => { panic!("parent thread disconnected") }	//only if it's panicking
 				}
 			);
 
@@ -737,7 +737,7 @@ impl Utf8Iter<'_> {
 	/// - Otherwise, `sec` must be a string, and the number/boolean in `top` decides how often to run `sec`.
 	/// - For arrays, the nesting layout and lengths must match exactly and the contained scalars must all be either strings or non-strings as above.
 	///
-	/// `Ok` contains the macros and repetition counts (with zero-counts omitted), and a flag indicating whether `sec` should be returned.
+	/// `Ok` contains the macros and repetition counts (omitting zero-count macros), and a flag indicating whether `sec` should be returned.
 	pub fn try_macros(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
 		use Value::*;
 		use crate::errors::TypeLabel;

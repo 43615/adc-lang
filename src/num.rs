@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering::*;
 use malachite::{Natural, Rational};
-use malachite::base::num::arithmetic::traits::{Abs, DivMod, Factorial, Floor, Parity, Pow, Reciprocal, Sign};
+use malachite::base::num::arithmetic::traits::*;
 use malachite::base::num::basic::traits::{Zero, One, Two};
 use malachite::base::num::conversion::traits::{ExactFrom, Digits, WrappingFrom};
 use malachite::rational::rational::arithmetic::traits::Approximate;

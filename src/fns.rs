@@ -7,7 +7,7 @@ use std::ptr::NonNull;
 use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::rounding_modes::RoundingMode;
-use malachite::base::num::arithmetic::traits::{Abs, CheckedLogBase, CheckedRoot, CheckedSqrt, Factorial, Mod, ModInverse, ModPow, Pow, Reciprocal, RoundToMultiple, Sign};
+use malachite::base::num::arithmetic::traits::*;
 use malachite::base::num::basic::traits::{NegativeOne, Zero, OneHalf, One};
 use malachite::base::num::comparison::traits::PartialOrdAbs;
 use malachite::base::num::conversion::traits::{PowerOf2Digits, PowerOf2DigitIterable};
@@ -276,13 +276,17 @@ dya!(div
 		Ok(B(bz))
 	},
 	
-	N(ra), N(rb), _ => {	//divide numbers
-		if *rb != Rational::ZERO {
-			Ok(N(ra / rb))
-		}
-		else {	//undefined
+	N(ra), N(rb), false => {	//divide numbers
+		if *rb == Rational::ZERO {	//undefined
 			Err(Arith("Division by 0".into()))
 		}
+		else {
+			Ok(N(ra / rb))
+		}
+	},
+
+	N(ra), N(rb), true => {	//greatest common divisor
+		Ok(N(ra.gcd(rb)))
 	},
 
 	S(sa), N(rb), _ => {	//truncate string
@@ -646,7 +650,7 @@ dya!(eq
 		Ok(B(bz))
 	},
 
-	_, _, true => {	//total: false if types differ
+	_, _, true => {	//infallible: false if types differ
 		Ok(B(bitvec![u8, Msb0; 0]))
 	}
 );
@@ -674,7 +678,7 @@ dya!(lt
 		Ok(B(bz))
 	},
 
-	_, _, true => {	//total: false if types differ
+	_, _, true => {	//infallible: false if types differ
 		Ok(B(bitvec![u8, Msb0; 0]))
 	}
 );
@@ -702,7 +706,7 @@ dya!(gt
 		Ok(B(bz))
 	},
 
-	_, _, true => {	//total: false if types differ
+	_, _, true => {	//infallible: false if types differ
 		Ok(B(bitvec![u8, Msb0; 0]))
 	}
 );
@@ -764,13 +768,13 @@ dya!(trig
 mon!(conv
 	B(ba), false => {	//boolean to natural
 		Ok(N(
-			Rational::from(Natural::from_power_of_2_digits_desc(8, ba.rchunks(8).rev().map(|bs| bs.load_be::<u8>())).unwrap())
+			Rational::from(Natural::from_power_of_2_digits_desc(8, bitvec_bytes(ba)).unwrap())
 		))
 	},
 
 	B(ba), true => {	//boolean to string
 		Ok(S(
-			crate::structs::Utf8Iter::from(ba.as_raw_slice()).try_into().map_err(Custom)?
+			crate::structs::Utf8Iter::from(bitvec_bytes(ba).collect::<Vec<u8>>()).try_into().map_err(Custom)?
 		))
 	},
 

@@ -159,6 +159,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `Na Nb - → Nz`: *a* minus *b*.
 - `Na Nb * → Nz`: *a* times *b*.
 - `Na Nb / → Nz`: *a* divided by *b*. Errors if *b* = 0.
+  - `` Na Nb `/ → Nz ``: Greatest common divisor of *a* and *b*. *z* is the largest rational such that *a*/*z* ∈ ℤ and *b*/*z* ∈ ℤ. If *a* = 0, *z* = |*b*| and vice versa.
 - `Na ! → Nz`: Reciprocal of *a*.
 - `NFa NFb ^ → NFz`: *a* to the power *b*. Errors if *a* = 0 and *b* < 0.
   - `Na NZb ^ → Nz`: Exact integer power if 0 ≤ |*b*| ≤ 2⁶⁴-1.
@@ -172,11 +173,11 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `Na Nb % → Nz`: *a* modulo *b*. *z* has the same sign as *b*. Errors if *b* = 0.
   - `` Na Nb `% → Nz ``: *a* rounded to the nearest integer multiple of *b* (ties to even). Errors if *b* = 0 and |*a*| > ½.
 - `Na Nb ~ → NZy Nz`: Euclidean division of *a* by *b*, with integer quotient *y* and remainder *z*. *a* = *yb* + *z*, and *z* has the same sign as *b*.
-  - `Na 0 ~ → NZy NNz`: Split *a* into its signed numerator *y* and denominator *z*. Zero is represented as 0/1.
-- `NNa NZb NNc | → NNz`: *aᵇ* mod *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) mod *c*.
+  - `Na 0 ~ → NZy NNz`: Split *a* into its signed numerator *y* and denominator *z*. *a* = 0 is represented as 0/1.
+- `NNa NZb NNc | → NNz`: *a* to the power *b*, modulo *c*. Errors if *b* < 0 and *a* doesn't have a coprime (multiplicative inverse) modulo *c*.
 - `Na Nb < → BBz` / `Na Nb = → BBz` / `Na Nb > → BBz`: Comparisons of two numbers. Note that the familiar digraphs `<=` and `>=` are not valid, use `>!` and `<!` instead.
-  - `` `< `` / `` `= `` / `` `> `` are total orders, returning `F` instead of erroring if the types are different.
-  - These commands were reversed in the original dc for no clear reason. In ADC, `a b >` corresponds to the infix expression `a > b`.
+  - `` `< `` / `` `= `` / `` `> `` are infallible comparisons, returning `F` instead of erroring if the types are different.
+  - *These commands were reversed in the original dc for no clear reason. In ADC, `a b >` corresponds to the infix expression `a > b`.*
 - `NNa n → NNz`: Factorial of *a*, 0 ≤ *a* ≤ 2⁶⁴-1.
 - `Sa n → NFz` returns a mathematical constant (to 64-bit float precision):
   - `e`: Euler's number (e)
@@ -211,7 +212,7 @@ Operations on booleans are overloaded variants of arithmetic functions:
 - `Ba NPb - → Bz` removes *b* bits from the end of *a*.
 - `Ba NPb * → Bz` repeats *a* *b* times.
 - `Ba NPb / → Bz` truncates *a* to *b* bits. No effect if *b* exceeds the length.
-- `Ba ! → Bz` negates *a*.
+- `Ba ! → Bz`: NOT *a*.
 - `Ba Bb - → Bz`: *a* XOR *b*. *b* is truncated or extended with `F` to match the length of *a*.
 - `Ba Bb * → Bz`: *a* AND *b*, ibid.
 - `Ba Bb / → Bz`: *a* OR *b*, ibid.
@@ -251,7 +252,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa NPb - → Sz` removes *b* characters from the end of *a*.
 - `Sa NPb * → Sz` repeats *a* *b* times.
 - `Sa NPb / → Sz` truncates *a* to *b* characters. No effect if *b* exceeds the length.
-- `Sa ! → Sz` inverts the case of all characters in *a*.
+- `Sa ! → Sz` inverts the case of all characters in *a*, where applicable.
 - `Sa Sb ^ → NZz` finds the first occurrence of *b* in *a* and returns its position, `` `1 `` if not found.
   - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here ⎋](https://docs.rs/regex/latest/regex/index.html#syntax), ensure that backslashes are escaped correctly.
 - `Sa v → Sz` reverses *a*.

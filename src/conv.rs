@@ -1,6 +1,7 @@
-//! Conversions of foreign types, some other boring stuff
+//! Conversions of foreign types, here be opinions
 
 use std::cmp::Ordering;
+use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode;
@@ -54,6 +55,11 @@ pub fn str_cmp(a: &str, b: &str) -> Ordering {
 	}
 }
 
+/// proper iterator over bytes from bitvec, right-aligned
+pub fn bitvec_bytes(a: &BitVec<u8, Msb0>) -> impl DoubleEndedIterator<Item = u8> + ExactSizeIterator + std::iter::FusedIterator {
+	a.rchunks(8).rev().map(|bs| bs.load_be::<u8>())
+}
+
 pub enum Promote2<'a> {
 	AA {
 		aa: &'a [Value],
@@ -83,7 +89,7 @@ impl<'a> TryFrom<(&'a Value, &'a Value)> for Promote2<'a> {
 			},
 			(A(aa), vb) => Ok(Self::AS { aa, vb, i: 0 }),
 			(va, A(ab)) => Ok(Self::SA { va, ab, i: 0 }),
-			_ => unreachable!()
+			_ => unsafe { std::hint::unreachable_unchecked() }
 		}
 	}
 }
@@ -109,8 +115,17 @@ impl<'a> Iterator for Promote2<'a> {
 			},
 		}
 	}
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		let len = match self {
+			Self::AA { aa, i, .. } => {aa.len().saturating_sub(*i)}
+			Self::AS { aa, i, .. } => {aa.len().saturating_sub(*i)}
+			Self::SA { ab, i, .. } => {ab.len().saturating_sub(*i)}
+		};
+		(len, Some(len))
+	}
 }
 impl std::iter::FusedIterator for Promote2<'_> {}
+impl ExactSizeIterator for Promote2<'_> {}
 
 #[allow(clippy::upper_case_acronyms)]
 pub enum Promote3<'a> {
@@ -182,7 +197,7 @@ impl<'a> TryFrom<(&'a Value, &'a Value, &'a Value)> for Promote3<'a> {
 			(A(aa), vb, vc) => Ok(Self::ASS { aa, vb, vc, i: 0 }),
 			(va, A(ab), vc) => Ok(Self::SAS { va, ab, vc, i: 0 }),
 			(va, vb, A(ac)) => Ok(Self::SSA { va, vb, ac, i: 0 }),
-			_ => unreachable!()
+			_ => unsafe { std::hint::unreachable_unchecked() }
 		}
 	}
 }
@@ -228,5 +243,18 @@ impl<'a> Iterator for Promote3<'a> {
 			},
 		}
 	}
+	fn size_hint(&self) -> (usize, Option<usize>) {
+		let len = match self {
+			Self::AAA { aa, i, .. } => {aa.len().saturating_sub(*i)}
+			Self::AAS { aa, i, .. } => {aa.len().saturating_sub(*i)}
+			Self::ASA { ac, i, .. } => {ac.len().saturating_sub(*i)}
+			Self::SAA { ab, i, .. } => {ab.len().saturating_sub(*i)}
+			Self::ASS { aa, i, .. } => {aa.len().saturating_sub(*i)}
+			Self::SAS { ab, i, .. } => {ab.len().saturating_sub(*i)}
+			Self::SSA { ac, i, .. } => {ac.len().saturating_sub(*i)}
+		};
+		(len, Some(len))
+	}
 }
 impl std::iter::FusedIterator for Promote3<'_> {}
+impl ExactSizeIterator for Promote3<'_> {}

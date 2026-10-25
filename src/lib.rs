@@ -283,6 +283,20 @@ fn string_or_bytes(v: &[u8]) -> String {
 	}
 }
 
+const ESCAPES: phf::Map<u8, u8> = phf::phf_map! {
+	b'b' => 0x08,	//backspace
+	b'a' => 0x07,	//bell
+	b't' => 0x09,	//horizontal tab
+	b'n' => 0x0A,	//line feed
+	b'v' => 0x0B,	//vertical tab
+	b'f' => 0x0C,	//form feed
+	b'r' => 0x0D,	//carriage return
+	b'e' => 0x1B,	//escape
+	b'[' => b'[',	//literal opening bracket
+	b']' => b']',	//literal closing bracket
+	b'\\' => b'\\'	//literal backslash
+};
+
 /// How much information to output on stderr
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogLevel {
@@ -506,8 +520,8 @@ pub unsafe fn interpreter(
 					Err(TryRecvError::Empty) => {	//not killed
 						//do nothing
 					},
-					Err(TryRecvError::Disconnected) => {	//parent should never disconnect
-						unreachable!()
+					Err(TryRecvError::Disconnected) => {	//only if it's panicking
+						panic!("parent thread disconnected")
 					}
 				}
 			}
@@ -672,7 +686,7 @@ pub unsafe fn interpreter(
 										continue 'cmd;
 									}
 								};
-								let Value::N(r) = v else {unreachable!()};
+								let Value::N(r) = v else { unsafe { std::hint::unreachable_unchecked() } };
 								rptr = Some(r.clone());
 								rpersist = alt;
 							}
@@ -742,7 +756,7 @@ pub unsafe fn interpreter(
 										Ok(0) => {},	//no-op
 										Ok(u) => {
 											if let Some(from) = st.mstk.len().checked_sub(u) {
-												if alt {st.mstk[from..].rotate_left(1);}
+												if alt {st.mstk[from..].rotate_left(1);}	//would be in cmds if it didn't use alt
 												else {st.mstk[from..].rotate_right(1);}
 											}
 											else {
@@ -1100,8 +1114,8 @@ pub unsafe fn interpreter(
 												Err(RecvTimeoutError::Timeout) => {	//wait completed, not killed
 													//do nothing
 												},
-												Err(RecvTimeoutError::Disconnected) => {	//parent should never disconnect
-													unreachable!()
+												Err(RecvTimeoutError::Disconnected) => {	//only if it's panicking
+													panic!("parent thread disconnected")
 												}
 											}
 										}
@@ -1256,7 +1270,7 @@ pub unsafe fn interpreter(
 								}
 							}
 						},
-						_ => unreachable!()
+						_ => unsafe { std::hint::unreachable_unchecked() }
 					}
 				},
 				ExecR => {
@@ -1404,7 +1418,7 @@ pub unsafe fn interpreter(
 								valerr!('J', "Register {} is not running a thread", reg_index_pretty(&ri));
 							}
 						},
-						_ => unreachable!()
+						_ => unsafe { std::hint::unreachable_unchecked() }
 					}
 				},
 				Lit => {
@@ -1425,7 +1439,7 @@ pub unsafe fn interpreter(
 							}
 							push!(Value::B(bits));
 						},
-						b'\'' | b'0'..=b'9' | b'.' | b'@' => {	//numbers
+						b'\'' | b'0'..=b'9' | b'.' | b'@' => {	//numbers, here be spaghet
 							debug!("Number literal");
 							let mut ipart = Vec::new();
 							let mut fpart = Vec::new();
@@ -1549,30 +1563,26 @@ pub unsafe fn interpreter(
 											ms = mpart.to_vec();
 											let mut es = epart.to_vec();
 											if let Some(first) = es.first_mut() && *first == b'`' { *first = b'-'; }
-											match String::from_utf8(es) {
-												Ok(es) => {
-													match es.parse::<i64>() {
-														Ok(i) => { exp = Some(i); },
-														Err(e) => {
-															use std::num::IntErrorKind::*;
-															match e.kind() {
-																Empty => { exp = Some(0); },
-																InvalidDigit => {
-																	valerr!('\'', "Invalid exponent: {}", es);
-																	alt = false;
-																	continue 'cmd;
-																},
-																PosOverflow | NegOverflow => {
-																	valerr!('\'', "Exponent {} is unrepresentable", es);
-																	alt = false;
-																	continue 'cmd;
-																},
-																_ => { unreachable!() }
-															}
-														}
+											let es = unsafe { String::from_utf8_unchecked(es) };
+											match i64::from_str(&es) {
+												Ok(i) => { exp = Some(i); },
+												Err(e) => {
+													use std::num::IntErrorKind::*;
+													match e.kind() {
+														Empty => { exp = Some(0); },
+														InvalidDigit => {
+															valerr!('\'', "Invalid exponent: {}", es);
+															alt = false;
+															continue 'cmd;
+														},
+														PosOverflow | NegOverflow => {
+															valerr!('\'', "Exponent {} is unrepresentable", es);
+															alt = false;
+															continue 'cmd;
+														},
+														_ => unsafe { std::hint::unreachable_unchecked() }
 													}
-												},
-												_ => { unreachable!() }
+												}
 											}
 										},
 										ref v => {
@@ -1733,7 +1743,7 @@ pub unsafe fn interpreter(
 										}
 										if es.is_empty() { es.push('0'); }
 										if m_empty { r = Rational::ONE; }    //only exponent part present
-										if let Ok(i) = es.parse::<i64>() {
+										if let Ok(i) = i64::from_str(&es) {
 											r *= Rational::from(ibase).pow(i);    //apply exponent
 										}
 										else {
@@ -1775,19 +1785,11 @@ pub unsafe fn interpreter(
 										}
 									},
 									b'\\' => {	//character escapes
-										match mac.next() {
-											Some(b'a') => {bytes.push(0x07);},		//bell
-											Some(b'b') => {bytes.push(0x08);},		//backspace
-											Some(b't') => {bytes.push(0x09);},		//horizontal tab
-											Some(b'n') => {bytes.push(0x0A);},		//line feed
-											Some(b'v') => {bytes.push(0x0B);},		//vertical tab
-											Some(b'f') => {bytes.push(0x0C);},		//form feed
-											Some(b'r') => {bytes.push(0x0D);},		//carriage return
-											Some(b'e') => {bytes.push(0x1B);},		//escape
-											Some(b'[') => {bytes.push(b'[');},		//literal opening bracket
-											Some(b']') => {bytes.push(b']');},		//literal closing bracket
-											Some(b'\\') => {bytes.push(b'\\');},		//literal backslash
-											Some(b0) => {								//other escapes
+										if let Some(b0) = mac.next() {
+											if let Some(esc) = ESCAPES.get(&b0) {	//backslash-char escape
+												bytes.push(*esc);
+											}
+											else {
 												if let Some(high) = upper_hex_to_nibble(b0) {	//byte literal
 													if let Some(b1) = mac.next() {
 														if let Some(low) = upper_hex_to_nibble(b1) {
@@ -1817,11 +1819,11 @@ pub unsafe fn interpreter(
 														}
 													}
 												}
-											},
-											None => {
-												synerr!('[', "Incomplete character escape: \\");
-												discard = true;
 											}
+										}
+										else {
+											synerr!('[', "Incomplete character escape: \\");
+											discard = true;
 										}
 									},
 									_ => {
@@ -1840,7 +1842,7 @@ pub unsafe fn interpreter(
 								}
 							}
 						},
-						_ => unreachable!()
+						_ => unsafe { std::hint::unreachable_unchecked() }
 					}
 				},
 				Space if b == b'#' => {	//line comment
@@ -1884,4 +1886,9 @@ pub unsafe fn interpreter(
 	}	//end of macro scope
 	
 	Ok(Finished)
+	//mmm
+	//you're still here?
+	//it's over
+	//go home
+	//go
 }
