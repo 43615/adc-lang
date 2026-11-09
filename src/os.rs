@@ -8,7 +8,7 @@ use std::process::{Command, Stdio, Child};
 use std::sync::Mutex;
 use bitvec::prelude::*;
 use crate::errors::TypeLabel;
-use crate::structs::{Value, State};
+use crate::structs::{Value::{self, *}, State, Utf8Iter};
 
 /// OS command definition
 pub type OsCmd = fn(&mut State) -> Result<Vec<Value>, String>;
@@ -59,19 +59,19 @@ pub static OS_CMDS: Mutex<phf::Map<&[u8], OsCmd>> = Mutex::new(phf::phf_map! {
 static mut PIDS: LazyCell<HashMap<u32, Child>> = LazyCell::new(HashMap::new);
 
 oscmd!(osarch, _st {
-	Ok(vec![Value::S(std::env::consts::ARCH.into())])
+	Ok(vec![S(std::env::consts::ARCH.into())])
 });
 
 oscmd!(osfamily, _st {
-	Ok(vec![Value::S(std::env::consts::FAMILY.into())])
+	Ok(vec![S(std::env::consts::FAMILY.into())])
 });
 
 oscmd!(osname, _st {
-	Ok(vec![Value::S(std::env::consts::OS.into())])
+	Ok(vec![S(std::env::consts::OS.into())])
 });
 
 oscmd!(pid, _st {
-	Ok(vec![Value::N(std::process::id().into())])
+	Ok(vec![N(std::process::id().into())])
 });
 
 fn try_reading_fd(name: &str) -> Result<File, String> {
@@ -88,19 +88,19 @@ fn try_writing_fd(name: &str) -> Result<File, String> {
 
 fn read<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::S(name) = &*va {
+		if let S(name) = &*va {
 			let mut v = Vec::new();
 			match try_reading_fd(name) {
 				Ok(mut fd) => {
 					match fd.read_to_end(&mut v) {
 						Ok(_) => {
 							if B {
-								Ok(vec![Value::A(
-									v.into_iter().map(|b| Value::N(b.into())).collect()
+								Ok(vec![A(
+									v.into_iter().map(|b| N(b.into())).collect()
 								)])
 							}
 							else {
-								Ok(vec![Value::S(
+								Ok(vec![S(
 									String::from_utf8_lossy(&v).into())
 								])
 							}
@@ -133,12 +133,12 @@ fn append<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::A(a), Value::S(name)) if B => {
+				(A(a), S(name)) if B => {
 					match try_appending_fd(name) {
 						Ok(mut fd) => {
 							let mut bytes = Vec::new();
 							for v in a {
-								if let Value::N(r) = v {
+								if let N(r) = v {
 									if let Ok(u) = u8::try_from(r) {
 										bytes.push(u);
 									}
@@ -174,7 +174,7 @@ fn append<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 						}
 					}
 				},
-				(Value::S(s), Value::S(name)) if !B => {
+				(S(s), S(name)) if !B => {
 					match try_appending_fd(name) {
 						Ok(mut fd) => {
 							match fd.write_all(s.as_bytes()) {
@@ -226,12 +226,12 @@ fn write<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::A(a), Value::S(name)) if B => {
+				(A(a), S(name)) if B => {
 					match try_writing_fd(name) {
 						Ok(mut fd) => {
 							let mut bytes = Vec::new();
 							for v in a {
-								if let Value::N(r) = v {
+								if let N(r) = v {
 									if let Ok(u) = u8::try_from(r) {
 										bytes.push(u);
 									}
@@ -267,7 +267,7 @@ fn write<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 						}
 					}
 				},
-				(Value::S(s), Value::S(name)) if !B => {
+				(S(s), S(name)) if !B => {
 					match try_writing_fd(name) {
 						Ok(mut fd) => {
 							match fd.write_all(s.as_bytes()) {
@@ -315,19 +315,19 @@ fn write<const B: bool>(st: &mut State) -> Result<Vec<Value>, String> {
 
 oscmd!(load, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::S(name) = &*va {
+		if let S(name) = &*va {
 			let mut v = Vec::new();
 			match try_reading_fd(name) {
 				Ok(mut fd) => {
 					match fd.read_to_end(&mut v) {
 						Ok(_) => {
-							if !v.starts_with(&crate::STATE_FILE_HEADER) {
+							if !v.starts_with(&State::STATE_FILE_HEADER) {
 								let name = name.to_owned();
 								st.mstk.push(va);
 								Err(format!("State file '{name}' is invalid"))
 							}
 							else {
-								let st_mac = crate::structs::Utf8Iter::from(v);
+								let st_mac = Utf8Iter::from(v);
 								let mut new_st = State::default();
 								
 								let res = crate::interpreter_simple(&mut new_st, st_mac, None);	//one recursive call as a treat
@@ -369,7 +369,7 @@ oscmd!(load, st {
 
 oscmd!(save, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::S(name) = &*va {
+		if let S(name) = &*va {
 			match try_writing_fd(name) {
 				Ok(mut fd) => {
 					let s = st.to_string();
@@ -403,7 +403,7 @@ oscmd!(setvar, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::S(var), Value::S(val)) => {
+				(S(var), S(val)) => {
 					if var.is_empty() {
 						st.mstk.push(va);
 						st.mstk.push(vb);
@@ -448,7 +448,7 @@ oscmd!(setvar, st {
 
 oscmd!(getvar, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::S(var) = &*va {
+		if let S(var) = &*va {
 			if var.is_empty() {
 				st.mstk.push(va);
 				return Err("Empty variable name".into());
@@ -457,7 +457,7 @@ oscmd!(getvar, st {
 				st.mstk.push(va);
 				return Err("Variable name must not contain '=' or NUL".into());
 			}
-			Ok(vec![Value::S(std::env::var_os(var).unwrap_or_default().to_string_lossy().into())])
+			Ok(vec![S(std::env::var_os(var).unwrap_or_default().to_string_lossy().into())])
 		}
 		else {
 			let ta = TypeLabel::from(&*va);
@@ -472,7 +472,7 @@ oscmd!(getvar, st {
 
 oscmd!(setdir, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::S(path) = &*va {
+		if let S(path) = &*va {
 			match std::env::set_current_dir(path) {
 				Ok(()) => {Ok(vec![])},
 				Err(e) => {
@@ -495,17 +495,17 @@ oscmd!(setdir, st {
 
 oscmd!(getdir, _st {
 	match std::env::current_dir() {
-		Ok(path) => {Ok(vec![Value::S(path.to_string_lossy().into())])},
+		Ok(path) => {Ok(vec![S(path.to_string_lossy().into())])},
 		Err(e) => {Err(format!("Can't get current working directory: {e}"))}
 	}
 });
 
 oscmd!(homedir, _st {
-	Ok(vec![Value::S(std::env::home_dir().unwrap_or_default().to_string_lossy().into())])
+	Ok(vec![S(std::env::home_dir().unwrap_or_default().to_string_lossy().into())])
 });
 
 oscmd!(tempdir, _st {
-	Ok(vec![Value::S(std::env::temp_dir().to_string_lossy().into())])
+	Ok(vec![S(std::env::temp_dir().to_string_lossy().into())])
 });
 
 fn try_child(command: &str, input: &str) -> Result<Child, String> {
@@ -560,16 +560,16 @@ oscmd!(run, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::S(input), Value::S(command)) => {
+				(S(input), S(command)) => {
 					match try_child(command, input) {
 						Ok(child) => {
 							let pid = child.id();
 							match child.wait_with_output() {
 								Ok(o) => {
 									Ok(vec![
-										Value::N(o.status.code().unwrap_or_default().into()),
-										Value::S(String::from_utf8_lossy(&o.stdout).into()),
-										Value::S(String::from_utf8_lossy(&o.stderr).into())
+										N(o.status.code().unwrap_or_default().into()),
+										S(String::from_utf8_lossy(&o.stdout).into()),
+										S(String::from_utf8_lossy(&o.stderr).into())
 									])
 								},
 								Err(e) => {
@@ -609,7 +609,7 @@ oscmd!(spawn, st {
 	if let Some(vb) = st.mstk.pop() {
 		if let Some(va) = st.mstk.pop() {
 			match (&*va, &*vb) {
-				(Value::S(input), Value::S(command)) => {
+				(S(input), S(command)) => {
 					let child = try_child(command, input).inspect_err(|_| { st.mstk.push(va); st.mstk.push(vb); })?;
 					let pid = child.id();
 					unsafe {
@@ -618,7 +618,7 @@ oscmd!(spawn, st {
 							panic!("Impossible OS error: Duplicate child process ID: {pid}");
 						}
 					}
-					Ok(vec![Value::N(pid.into())])
+					Ok(vec![N(pid.into())])
 				},
 				_ => {
 					let ta = TypeLabel::from(&*va);
@@ -641,15 +641,15 @@ oscmd!(spawn, st {
 
 oscmd!(wait, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(ra) = &*va {
+		if let N(ra) = &*va {
 			if let Ok(pid) = u32::try_from(ra) {
 				if let Some(child) = unsafe { #[expect(static_mut_refs)] PIDS.remove(&pid) } {
 					match child.wait_with_output() {
 						Ok(o) => {
 							Ok(vec![
-								Value::N(o.status.code().unwrap_or_default().into()),
-								Value::S(String::from_utf8_lossy(&o.stdout).into()),
-								Value::S(String::from_utf8_lossy(&o.stderr).into())
+								N(o.status.code().unwrap_or_default().into()),
+								S(String::from_utf8_lossy(&o.stdout).into()),
+								S(String::from_utf8_lossy(&o.stderr).into())
 							])
 						},
 						Err(e) => {
@@ -682,15 +682,15 @@ oscmd!(wait, st {
 
 oscmd!(exited, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(ra) = &*va {
+		if let N(ra) = &*va {
 			if let Ok(pid) = u32::try_from(ra) {
 				if let Some(child) = unsafe { #[expect(static_mut_refs)] PIDS.get_mut(&pid) } {
 					match child.try_wait() {
 						Ok(Some(_)) => {
-							Ok(vec![Value::B(bitvec![u8, Msb0; 1])])
+							Ok(vec![B(bitvec![u8, Msb0; 1])])
 						},
 						Ok(None) => {
-							Ok(vec![Value::B(bitvec![u8, Msb0; 0])])
+							Ok(vec![B(bitvec![u8, Msb0; 0])])
 						},
 						Err(e) => {
 							st.mstk.push(va);
@@ -722,7 +722,7 @@ oscmd!(exited, st {
 
 oscmd!(kill, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(ra) = &*va {
+		if let N(ra) = &*va {
 			if let Ok(pid) = u32::try_from(ra) {
 				if let Some(mut child) = unsafe { #[expect(static_mut_refs)] PIDS.remove(&pid) } {
 					match child.kill() {
@@ -730,9 +730,9 @@ oscmd!(kill, st {
 							match child.wait_with_output() {
 								Ok(o) => {
 									Ok(vec![
-										Value::N(o.status.code().unwrap_or_default().into()),
-										Value::S(String::from_utf8_lossy(&o.stdout).into()),
-										Value::S(String::from_utf8_lossy(&o.stderr).into())
+										N(o.status.code().unwrap_or_default().into()),
+										S(String::from_utf8_lossy(&o.stdout).into()),
+										S(String::from_utf8_lossy(&o.stderr).into())
 									])
 								},
 								Err(e) => {

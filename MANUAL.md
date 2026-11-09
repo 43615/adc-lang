@@ -107,7 +107,7 @@ Format specifics:
   - For values |x|<1, the leading 0 may be omitted.
 - Scientific/exponential notation uses `@` (at sign) instead of the more conventional e/E. The exponent values themselves are always interpreted as decimal, but applied to the current base. Negative exponents also use `` ` ``.
   - If a number starts with `@` (no significand), a 1 is implied.
-  - The exponent is technically limited to a signed 64-bit integer, but this limit will never matter in practice.
+  - *The exponent is technically limited to a signed 64-bit integer, but you'll run out of memory before that point anyway.*
 - Bases above 10 use letters for digits after 9 (case-insensitive). To include letters in a number, it must be prefixed by `'` (apostrophe). Example with input base 16: `'dEaD.bEeF` = 57005.7458343505859375.
   - Without the apostrophe, letters will be interpreted as commands instead of part of the number.
 - Bases above 36 use a special `'enclosed'` format. Numbers are represented as a space-separated series of digits, which are in decimal themselves. Negatives, fractionals and exponents work identically. Example with input base 100: `` '`12 3.45 0 67@`8' `` = -1203.450067 * 100⁻⁸.
@@ -127,7 +127,7 @@ ADC also supports the [factorial/factoradic number system ⎋](https://en.wikipe
 - Since the digits can be arbitrarily large, factoradic numbers use the same `'enclosed'` format as bases above 36.
 - Although factoradic representations are not canonically defined or used for negative values, ADC allows negation of the whole number with the usual `` ` ``.
 - The place values are extended to fractionals in the canonical manner. Redundant places (0!, 1/0!, 1/1!) are omitted. The resulting place values are `… 120 24 6 2 1.1/2 1/6 1/24 1/120 …`, and the highest possible digits are `… 5 4 3 2 1.1 2 3 4 …`.
-- Since all rational numbers have a finite factoradic representation, no recurring digits are ever output or accepted in input (computing the value of nonzero recurring digits wouldn't terminate, approaching irrationals).
+- Since all rational numbers have a finite factoradic representation, no recurring digits are ever output or accepted in input. Recurring non-zero factoradic digits correspond to certain irrational values.
 - The scientific and fractional output modes are not really useful for working with factoradics. They are not used in automatic mode, but may still be selected manually. Scientific notation displaces the significand, which doesn't correspond do a simple multiplication/division for factoradics.
 - As with bases above 36, numbers without apostrophes are interpreted as decimal.
 
@@ -138,7 +138,7 @@ These are the options for controlling number I/O operations:
 - `NPa k` sets the output precision. This limits the amount of displayed significant digits, with no effect on calculations. The default value of 0 means no limit. Setting some limit is recommended when using ADC as a calculator, since exact representations in normal/scientific notation may be impractically long (possibly as many recurring digits as the value of the denominator).
   - Normal: Counts all significant digits until reaching K. Trailing digits that don't fit are removed: integer digits are replaced with 0s, fractional digits are discarded, recurring digits are only displayed as such if the whole recurring portion can fit. Rounds the remaining digits to nearest, ties to even ([avoiding biases ⎋](https://en.wikipedia.org/wiki/Rounding#Rounding_half_to_even)).
   - Scientific: Same rules, the exponent is not included in the digit count.
-  - Fraction: Finds the best approximation with at most K digits in the numerator or denominator, whichever is greater. This may give surprisingly incorrect results.
+  - Fraction: Finds the best approximation with up to K digits in the denominator.
 - `K → NPz` returns the current output precision.
 - `NNa i` sets the input base, must be at least 2 (or 1 for factoradics). Bases 11-36 require an `'apostrophe` to include letters. Bases over 36 and factoradics require the `'enclosed'` format, interpreted as decimal otherwise.
 - `I → NNz` returns the current input base.
@@ -246,6 +246,7 @@ Since nesting is required for any complex program, string input uses `[square br
 - `\[` and `\]`: Unpaired square brackets (5B, 5D), not processed as string delimiters. These need to be escaped multiple (2ⁿ-1) times in nested strings, as one would do with quotes in other languages ("backslash explosion"). Example: Executing `[[[foo\\\\\\\]bar]]]` parses it into `[[foo\\\]bar]]`, then `[foo\]bar]` and finally `foo]bar` (as it would be printed).
   - A nicer alternative is to use [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93A+[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
 - `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is rejected otherwise.
+- If the string opens with `` `[ ``, all backslash escapes are disabled.
 
 Strings also use overloaded variants of arithmetic functions:
 - `Sa Sb + → Sz` concatenates *a* and *b*.

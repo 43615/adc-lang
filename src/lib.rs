@@ -31,11 +31,8 @@ use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{Factorial, NegAssign, Pow};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One, Two};
 use malachite::base::num::conversion::traits::{PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
-use crate::errors::TypeLabel;
-
-
-/// Added at the start of saved state files
-pub const STATE_FILE_HEADER: [u8;20] = *b"# ADC state file v1\n";
+use errors::TypeLabel;
+use structs::Value::*;
 
 struct LineEditor(Interface<DefaultTerminal>);
 
@@ -95,9 +92,13 @@ fn input_stream() -> Box<dyn ReadLine + Send> {
 	}
 }
 
-/// Interface for the required IO streams (input, output, error)
-pub trait IOStreams : Send {
-	/// Read one line from the input stream. This is called once by every execution of the `?` command within ADC.
+/// Interface for the required IO streams (input, output, error).
+///
+/// Function implementations should block as little as possible and preferably handle errors internally, as most IO errors returned by them will abort the interpreter.
+///
+/// Concurrent access will be managed by the interpreter, so only one instance of an implementor is needed. It may therefore hold exclusive/unshareable control of any underlying streams.
+pub trait IOStreams {
+	/// Read one line from the input stream, block until sufficient input is received. This is called once by every execution of the `?` command within ADC.
 	///
 	/// [`ErrorKind::Interrupted`] cancels `?` with an error, [`ErrorKind::UnexpectedEof`] makes an empty string, other [`ErrorKind`]s are returned early from the interpreter.
 	fn read_line(&mut self) -> std::io::Result<String>;
@@ -220,7 +221,7 @@ enum Command {
 }
 
 /// Dense map of character bytes to commands
-const CMDS: [Command; 128] = {
+pub(crate) const CMDS: [Command; 128] = {
 	use Command::*;
 	use fns::*;
 	use cmds::*;
@@ -284,8 +285,8 @@ fn string_or_bytes(v: &[u8]) -> String {
 }
 
 const ESCAPES: phf::Map<u8, u8> = phf::phf_map! {
-	b'b' => 0x08,	//backspace
 	b'a' => 0x07,	//bell
+	b'b' => 0x08,	//backspace
 	b't' => 0x09,	//horizontal tab
 	b'n' => 0x0A,	//line feed
 	b'v' => 0x0B,	//vertical tab
@@ -343,7 +344,7 @@ pub fn interpreter_simple(
 pub fn interpreter_no_os(
 	st: &mut State,
 	start: Utf8Iter,
-	io: Arc<Mutex<dyn IOStreams>>,
+	io: Arc<Mutex<dyn IOStreams + Send>>,
 	ll: LogLevel,
 	kill: Option<&Receiver<()>>,
 ) -> std::io::Result<ExecResult>
@@ -391,7 +392,7 @@ pub unsafe fn interpreter_no_io(
 pub unsafe fn interpreter(
 	st: &mut State,
 	start: Utf8Iter,
-	io: Arc<Mutex<dyn IOStreams>>,
+	io: Arc<Mutex<dyn IOStreams + Send>>,
 	mut ll: LogLevel,
 	kill: Option<&Receiver<()>>,
 	#[cfg_attr(feature = "no_os", expect(unused_variables))]
@@ -399,6 +400,19 @@ pub unsafe fn interpreter(
 ) -> std::io::Result<ExecResult>
 {
 	use ExecResult::*;
+
+	debug_assert!(
+		{
+			use Command::*;
+			let mut counts = [0u8; 3];
+			for cmd in CMDS {
+				counts[match cmd {
+					Exec => 0, ExecR => 1, Lit => 2, _ => {continue;}
+				}] += 1;
+			}
+			counts == [20, 8, 16]
+		}, "mismatched amounts of late-parsed commands in CMDS/interpreter"
+	);
 
 	let th_name = if kill.is_some() {	//if running in a child thread
 		std::thread::current().name().unwrap().to_owned()
@@ -671,22 +685,22 @@ pub unsafe fn interpreter(
 					match b {
 						b'`' => {	//alt prefix
 							alt = true;
-							continue 'cmd;	//force digraph
+							continue 'cmd;	//skip the reset
 						},
 						b':' => {	//set register pointer
 							if let Some(va) = st.mstk.pop() {
 								let v = match &*va {
-									Value::N(_) => &*va,
-									Value::B(_) => &fns::conv(&va, false).unwrap(),
-									Value::S(_) => &fns::conv(&va, true).unwrap(),
-									Value::A(_) => {
+									N(_) => &*va,
+									B(_) => &fns::conv(&va, false).unwrap(),
+									S(_) => &fns::conv(&va, true).unwrap(),
+									A(_) => {
 										st.mstk.push(va);
 										synerr!(':', "Expected a scalar, array given");
 										alt = false;
 										continue 'cmd;
 									}
 								};
-								let Value::N(r) = v else { unsafe { std::hint::unreachable_unchecked() } };
+								let N(r) = v else { unsafe { std::hint::unreachable_unchecked() } };
 								rptr = Some(r.clone());
 								rpersist = alt;
 							}
@@ -694,7 +708,8 @@ pub unsafe fn interpreter(
 								synerr!(':', "Expected 1 argument, 0 given");
 							}
 						},
-						b'd' => {
+						//d/D are not in cmds because they need invasive access to abuf
+						b'd' => {	//duplicate top
 							if let Some(v) = st.mstk.last() {
 								if let Some(p) = dest.last_mut() {	//manual shadowed push
 									unsafe {
@@ -709,9 +724,9 @@ pub unsafe fn interpreter(
 								valerr!('d', "Stack is empty");
 							}
 						},
-						b'D' => {
+						b'D' => {	//duplicate n
 							if let Some(va) = st.mstk.pop() {
-								if let Value::N(r) = &*va {
+								if let N(r) = &*va {
 									match usize::try_from(r) {
 										Ok(0) => {},	//no-op
 										Ok(u) => {
@@ -751,7 +766,7 @@ pub unsafe fn interpreter(
 						},
 						b'R' => {	//rotate
 							if let Some(va) = st.mstk.pop() {
-								if let Value::N(r) = &*va {
+								if let N(r) = &*va {
 									match usize::try_from(r) {
 										Ok(0) => {},	//no-op
 										Ok(u) => {
@@ -787,7 +802,7 @@ pub unsafe fn interpreter(
 							drop(lock);
 							match res {
 								Ok(s) => {
-									push!(Value::S(s));
+									push!(S(s));
 								},
 								Err(e) => {
 									match e.kind() {
@@ -795,7 +810,7 @@ pub unsafe fn interpreter(
 											valerr!('?', "Interrupted");
 										},
 										ErrorKind::UnexpectedEof => {
-											push!(Value::S(String::new()));
+											push!(S(String::new()));
 										},
 										_ => {
 											return Err(e);
@@ -839,7 +854,7 @@ pub unsafe fn interpreter(
 						},
 						b'"' => {	//toggle pbuf
 							if let Some(s) = pbuf.take() {	//close
-								push!(Value::S(s));
+								push!(S(s));
 							}
 							else {	//open
 								pbuf = Some(String::new());
@@ -847,8 +862,8 @@ pub unsafe fn interpreter(
 						},
 						b'(' => {	//array input: open
 							let nn = if let Some(p) = dest.last_mut() { unsafe {	//SAFETY: dest is only mutated here, logic is sound
-								p.as_mut().push(Value::A(Vec::new()));	//create nested A
-								let Value::A(new) = &mut p.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//and get reference to it
+								p.as_mut().push(A(Vec::new()));	//create nested A
+								let A(new) = &mut p.as_mut().last_mut().unwrap_unchecked() else { std::hint::unreachable_unchecked() };	//and get reference to it
 								NonNull::from(new)
 							}}
 							else {
@@ -859,14 +874,14 @@ pub unsafe fn interpreter(
 						b')' => {	//array input: close
 							if dest.pop().is_some() {
 								if dest.is_empty() {	//completed
-									st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));	//commit to stack
+									st.mstk.push(Arc::new(A(std::mem::take(&mut abuf))));	//commit to stack
 								}
 							}
 							else {
 								synerr!(')', "Mismatched closing ')'");
 							}
 						},
-						b'x' => {
+						b'x' => {	//execute macro(s)
 							if let Some(top) = st.mstk.pop() {
 								let sec = st.mstk.pop();
 								match Utf8Iter::try_macros(&top, sec.as_deref()) {
@@ -882,7 +897,7 @@ pub unsafe fn interpreter(
 										call.extend(stk.into_iter().rev());
 
 										if !dest.is_empty() {	//flush array buffer if not completed
-											st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
+											st.mstk.push(Arc::new(A(std::mem::take(&mut abuf))));
 											dest.clear();	//SAFETY: remove leftover dangling references
 										}
 										continue 'mac;
@@ -898,7 +913,7 @@ pub unsafe fn interpreter(
 								synerr!('x', "Expected 1 or 2 arguments, 0 given");
 							}
 						},
-						b'q' => {
+						b'q' => {	//quit
 							let u = u8::wrapping_from(&Integer::rounding_from(rptr.unwrap_or_default(), malachite::base::rounding_modes::RoundingMode::Down).0);
 							return if alt {
 								Ok(HardQuit(u))
@@ -907,15 +922,15 @@ pub unsafe fn interpreter(
 								Ok(SoftQuit(u))
 							};
 						},
-						b'Q' => {
+						b'Q' => {	//break n macros
 							if let Some(va) = st.mstk.pop() {
 								match &*va {
-									Value::N(r) => {
+									N(r) => {
 										if let Ok(u) = usize::try_from(r) {
 											call.truncate(call.len().saturating_sub(u));
 
 											if !dest.is_empty() {	//flush array buffer if not completed
-												st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
+												st.mstk.push(Arc::new(A(std::mem::take(&mut abuf))));
 												dest.clear();	//SAFETY: remove leftover dangling references
 											}
 											continue 'mac;
@@ -959,14 +974,14 @@ pub unsafe fn interpreter(
 								Some(b) if !matches!(byte_cmd(b), Space) => {
 									match b {
 										b'z' => {	//stack depth
-											push!(Value::N(st.mstk.len().into()));
+											push!(N(st.mstk.len().into()));
 										},
 										b'r' => {	//reverse stack
 											st.mstk.reverse();
 										},
 										b'R' => {	//reverse part of stack
 											if let Some(va) = st.mstk.pop() {
-												if let Value::N(r) = &*va {
+												if let N(r) = &*va {
 													match usize::try_from(r) {
 														Ok(0) => {},	//no-op
 														Ok(u) => {
@@ -1041,15 +1056,15 @@ pub unsafe fn interpreter(
 								}
 							}
 						},
-						b'N' => {
+						b'N' => {	//use/seed rng
 							match (st.mstk.pop(), alt) {
 								(Some(va), false) => {	//get random natural
 									match &*va {
-										Value::N(r) => {
+										N(r) => {
 											match Natural::try_from(r) {
 												Ok(n) => {
 													let res = malachite::natural::random::get_random_natural_less_than(st.get_rng_or_seed_from_os(), &n);
-													push!(Value::N(Rational::from(res)));
+													push!(N(Rational::from(res)));
 												},
 												_ => {
 													st.mstk.push(va);
@@ -1066,7 +1081,7 @@ pub unsafe fn interpreter(
 								}
 								(Some(va), true) => {	//seed rng
 									match &*va {
-										Value::N(r) => {
+										N(r) => {
 											match Integer::try_from(r) {
 												Ok(Integer::NEGATIVE_ONE) => {	//return to os seed (lazy init)
 													st.reset_rng();
@@ -1098,7 +1113,7 @@ pub unsafe fn interpreter(
 						},
 						b'w' => {	//wait
 							if let Some(va) = st.mstk.pop() {
-								if let Value::N(r) = &*va {
+								if let N(r) = &*va {
 									if let Some(dur) = u128::try_from(r).ok().and_then(|ns| {
 										(ns <= std::time::Duration::MAX.as_nanos()).then(|| std::time::Duration::from_nanos_u128(ns))
 									}) {
@@ -1139,8 +1154,8 @@ pub unsafe fn interpreter(
 								synerr!('w', "Expected 1 argument, 0 given");
 							}
 						},
-						b'W' => {
-							push!(Value::N(
+						b'W' => {	//system time
+							push!(N(
 								match std::time::SystemTime::UNIX_EPOCH.elapsed() {
 									Ok(dur) => {
 										Rational::from(dur.as_nanos())
@@ -1162,6 +1177,7 @@ pub unsafe fn interpreter(
 									word.push(b);
 								}
 							}
+							debug!("Word command {}", string_or_bytes(&word));
 
 							match &word[..] {	//word commands:
 								b"restrict" => {
@@ -1177,12 +1193,12 @@ pub unsafe fn interpreter(
 									ll = LogLevel::Debug;
 								},
 								b"err" => {
-									push!(Value::A(
+									push!(A(
 										if let Some((n, c, s)) = elatch.take() {
 											vec![
-												Value::N(n.into()),
-												Value::S(c.into()),
-												Value::S(s)
+												N(n.into()),
+												S(c.into()),
+												S(s)
 											]
 										}
 										else { vec![] }
@@ -1191,11 +1207,11 @@ pub unsafe fn interpreter(
 								b"rptr" => {
 									rpersist = false;
 									push!(
-										if let Some(ri) = rptr.take() { Value::N(ri) } else { Value::A(vec![]) }
+										if let Some(ri) = rptr.take() { N(ri) } else { A(vec![]) }
 									);
 								},
 								b"th" => {
-									push!(Value::S(th_name.clone()));
+									push!(S(th_name.clone()));
 								},
 								b"joinall" => {
 									for s in st.regs.end_threads(false) {
@@ -1208,7 +1224,7 @@ pub unsafe fn interpreter(
 									}
 								},
 								b"thlist" => {
-									push!(Value::A(st.regs.list_threads().into_iter().map(Value::N).collect()));
+									push!(A(st.regs.list_threads().into_iter().map(N).collect()));
 								},
 								b"trim" => {
 									st.trim();
@@ -1295,11 +1311,11 @@ pub unsafe fn interpreter(
 					debug!("Register command {}{}", if alt {"alt-"} else {""}, b as char);
 					match b {
 						b'Z' => {	//stack depth
-							push!(Value::N(
+							push!(N(
 								st.regs.try_get(&ri).map(|reg| reg.v.len().into()).unwrap_or_default()
 							));
 						},
-						b's' => {
+						b's' => {	//save to reg
 							if let Some(va) = st.mstk.pop() {
 								let reg = st.regs.get_mut(&ri);
 								if let Some(rv) = reg.v.last_mut() {
@@ -1313,7 +1329,7 @@ pub unsafe fn interpreter(
 								synerr!('s', "Stack is empty");
 							}
 						},
-						b'S' => {
+						b'S' => {	//push to reg
 							if let Some(va) = st.mstk.pop() {
 								st.regs.get_mut(&ri).v.push(va);
 							}
@@ -1321,7 +1337,7 @@ pub unsafe fn interpreter(
 								synerr!('S', "Stack is empty");
 							}
 						},
-						b'l' => {
+						b'l' => {	//load from reg
 							if let Some(rv) = st.regs.try_get(&ri).and_then(|reg| reg.v.last()) {
 								if let Some(p) = dest.last_mut() {	//manual shadowed push
 									unsafe {
@@ -1336,7 +1352,7 @@ pub unsafe fn interpreter(
 								synerr!('l', "Register {} is empty", reg_index_pretty(&ri));
 							}
 						},
-						b'L' => {
+						b'L' => {	//pop from reg
 							if let Some(rv) = st.regs.try_get_mut(&ri).and_then(|reg| reg.v.pop()) {
 								if let Some(p) = dest.last_mut() {	//manual shadowed push
 									unsafe {
@@ -1351,12 +1367,12 @@ pub unsafe fn interpreter(
 								synerr!('L', "Register {} is empty", reg_index_pretty(&ri));
 							}
 						},
-						b'X' => {
+						b'X' => {	//execute in thread
 							if let Some(true) = st.regs.try_get(&ri).map(|reg| reg.th.is_some()) {
 								valerr!('X', "Register {} is already running a thread", reg_index_pretty(&ri));
 							}
 							else if let Some(va) = st.mstk.pop() {
-								if let Value::S(sa) = &*va {
+								if let S(sa) = &*va {
 									let name = format!("{th_name}{}: ", reg_index_pretty(&ri));
 									let th_st = if alt {st.clone()} else {State::default()};
 									match ThreadHandle::spawn(&name, th_st, sa.to_owned(), Arc::clone(&io), ll, restrict) {
@@ -1379,7 +1395,7 @@ pub unsafe fn interpreter(
 								synerr!('X', "Expected 1 argument, 0 given");
 							}
 						},
-						b'j' => {
+						b'j' => {	//join/kill thread
 							let ri_nice = reg_index_pretty(&ri);
 							if let Some(reg) = st.regs.try_get_mut(&ri) && let Some(th) = reg.th.take() {
 								if alt {th.kill();}
@@ -1408,11 +1424,11 @@ pub unsafe fn interpreter(
 								valerr!('j', "Register {} is not running a thread", ri_nice);
 							}
 						},
-						b'J' => {
+						b'J' => {	//	poll thread status
 							if let Some(th) = st.regs.try_get(&ri).and_then(|reg| reg.th.as_ref()) {
 								let mut bz = BitVec::new();
 								bz.push(th.is_finished());
-								push!(Value::B(bz));
+								push!(B(bz));
 							}
 							else {
 								valerr!('J', "Register {} is not running a thread", reg_index_pretty(&ri));
@@ -1437,7 +1453,7 @@ pub unsafe fn interpreter(
 									}
 								}
 							}
-							push!(Value::B(bits));
+							push!(B(bits));
 						},
 						b'\'' | b'0'..=b'9' | b'.' | b'@' => {	//numbers, here be spaghet
 							debug!("Number literal");
@@ -1761,11 +1777,11 @@ pub unsafe fn interpreter(
 							}
 
 							if !discard {
-								push!(Value::N(r));
+								push!(N(r));
 							}
 						},
 						b'[' => {	//strings
-							debug!("String literal");
+							debug!(if !alt {"String literal"} else {"Raw string literal"});
 							let mut bytes = Vec::new();
 							let mut discard = false;
 							let mut nest = 1usize;
@@ -1784,7 +1800,7 @@ pub unsafe fn interpreter(
 											bytes.push(b']');
 										}
 									},
-									b'\\' => {	//character escapes
+									b'\\' if !alt => {	//character escapes
 										if let Some(b0) = mac.next() {
 											if let Some(esc) = ESCAPES.get(&b0) {	//backslash-char escape
 												bytes.push(*esc);
@@ -1834,7 +1850,7 @@ pub unsafe fn interpreter(
 							if !discard {
 								match String::try_from(Utf8Iter::from(bytes)) {
 									Ok(s) => {
-										push!(Value::S(s));
+										push!(S(s));
 									},
 									Err(e) => {
 										synerr!('[', "Invalid string: {}", e);
@@ -1871,7 +1887,7 @@ pub unsafe fn interpreter(
 		}	//end of command scope
 
 		if !dest.is_empty() {	//flush array buffer if not completed
-			st.mstk.push(Arc::new(Value::A(std::mem::take(&mut abuf))));
+			st.mstk.push(Arc::new(A(std::mem::take(&mut abuf))));
 			dest.clear();	//SAFETY: remove leftover dangling references
 		}
 

@@ -12,7 +12,7 @@ use malachite::base::num::basic::traits::{NegativeOne, Zero, OneHalf, One};
 use malachite::base::num::comparison::traits::PartialOrdAbs;
 use malachite::base::num::conversion::traits::{PowerOf2Digits, PowerOf2DigitIterable};
 use crate::errors::FnErr::{self, *};
-use crate::structs::Value::{self, *};
+use crate::structs::{Value::{self, *}, Utf8Iter};
 use crate::conv::*;
 use crate::RE_CACHE;
 
@@ -774,13 +774,13 @@ mon!(conv
 
 	B(ba), true => {	//boolean to string
 		Ok(S(
-			crate::structs::Utf8Iter::from(bitvec_bytes(ba).collect::<Vec<u8>>()).try_into().map_err(Custom)?
+			Utf8Iter::from(bitvec_bytes(ba).collect::<Vec<u8>>()).try_into().map_err(Custom)?
 		))
 	},
 
 	N(ra), false => {	//natural to string
 		Ok(S(
-			crate::structs::Utf8Iter::from(r_n(ra)?.to_power_of_2_digits_desc(8)).try_into().map_err(Custom)?
+			Utf8Iter::from(r_n(ra)?.to_power_of_2_digits_desc(8)).try_into().map_err(Custom)?
 		))
 	},
 

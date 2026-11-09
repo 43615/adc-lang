@@ -151,7 +151,7 @@ fn main() -> ExitCode {
 		})
 	}
 
-	let mut io: Option<Arc<Mutex<dyn IOStreams>>> = None;
+	let mut io: Option<Arc<Mutex<dyn IOStreams + Send>>> = None;
 
 	//parse tokens into actions + open files, already performs `--help` and `--version`
 	let mut args = args.iter().peekable();
@@ -361,7 +361,7 @@ fn main() -> ExitCode {
 				//state files are just ADC scripts
 				let mut st_script = Vec::new();
 				if let Err(c) = fd.read_to_end(&mut st_script).map_err(|e| {runtime_error(format!("Can't read from state file: {e}"))}) {return c;}
-				if !st_script.starts_with(&STATE_FILE_HEADER) {return runtime_error("Invalid state file".into());}
+				if !st_script.starts_with(&State::STATE_FILE_HEADER) {return runtime_error("Invalid state file".into());}
 				let start = Utf8Iter::from(st_script);
 
 				let mut nst = State::default();

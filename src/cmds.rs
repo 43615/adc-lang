@@ -5,7 +5,7 @@
 //! Errors ending in `!` are displayed as syntax errors, others as value errors (in-band hack to keep the return type composable).
 
 use crate::errors::TypeLabel;
-use crate::structs::{Value, State};
+use crate::structs::{Value::{self, *}, State};
 
 /// Impure command
 pub type Cmd = fn(&mut State) -> Result<Vec<Value>, String>;
@@ -21,7 +21,7 @@ macro_rules! cmd {
 //   k
 cmd!(sk, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(r) = &*va {
+		if let N(r) = &*va {
 			st.params.try_set_k(r)?;
 			Ok(vec![])
 		}
@@ -39,7 +39,7 @@ cmd!(sk, st {
 //   i
 cmd!(si, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(r) = &*va {
+		if let N(r) = &*va {
 			st.params.try_set_i(r)?;
 			Ok(vec![])
 		}
@@ -57,7 +57,7 @@ cmd!(si, st {
 //   o
 cmd!(so, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(r) = &*va {
+		if let N(r) = &*va {
 			st.params.try_set_o(r)?;
 			Ok(vec![])
 		}
@@ -75,7 +75,7 @@ cmd!(so, st {
 //   m
 cmd!(sm, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(r) = &*va {
+		if let N(r) = &*va {
 			st.params.try_set_m(r)?;
 			Ok(vec![])
 		}
@@ -92,22 +92,22 @@ cmd!(sm, st {
 
 //   K
 cmd!(gk, st {
-	Ok(vec![Value::N(st.params.get_k().into())])
+	Ok(vec![N(st.params.get_k().into())])
 });
 
 //   I
 cmd!(gi, st {
-	Ok(vec![Value::N(st.params.get_i().into())])
+	Ok(vec![N(st.params.get_i().into())])
 });
 
 //   O
 cmd!(go, st {
-	Ok(vec![Value::N(st.params.get_o().into())])
+	Ok(vec![N(st.params.get_o().into())])
 });
 
 //   M
 cmd!(gm, st {
-	Ok(vec![Value::N((st.params.get_m() as u8).into())])
+	Ok(vec![N((st.params.get_m() as u8).into())])
 });
 
 //   {
@@ -131,7 +131,7 @@ cmd!(cls, st {
 //   C
 cmd!(cln, st {
 	if let Some(va) = st.mstk.pop() {
-		if let Value::N(r) = &*va {
+		if let N(r) = &*va {
 			if let Ok(u) = usize::try_from(r) {
 				if let Some(len) = st.mstk.len().checked_sub(u) {
 					st.mstk.truncate(len);

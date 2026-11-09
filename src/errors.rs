@@ -1,7 +1,7 @@
 //! The most boring module
 
 use std::fmt::{Display, Formatter};
-use crate::structs::Value;
+use crate::structs::Value::{self, *};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FnErr {
@@ -37,10 +37,10 @@ impl std::error::Error for FnErr {}
 impl From<&Value> for TypeLabel {
 	fn from(value: &Value) -> Self {
 		match value {
-			Value::B(_) => Self::B,
-			Value::N(_) => Self::N,
-			Value::S(_) => Self::S,
-			Value::A(_) => Self::A
+			B(_) => Self::B,
+			N(_) => Self::N,
+			S(_) => Self::S,
+			A(_) => Self::A
 		}
 	}
 }
@@ -60,7 +60,7 @@ impl Display for TypeLabel {
 
 /// Custom rich error type for [`Utf8Iter`](crate::structs::Utf8Iter). Byte values are displayed using ADC's string literal syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[must_use] pub enum Utf8Error {
+#[must_use] pub enum Utf8Err {
 	OutOfBounds(usize, usize),
 	Impossible(u8),
 	ContAtStart(u8),
@@ -76,7 +76,7 @@ impl Display for TypeLabel {
 	TooLarge(u32, u8, u8, u8, u8)
 }
 
-impl Display for Utf8Error {
+impl Display for Utf8Err {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		match self {
 			Self::OutOfBounds(pos, len) => {write!(f, "Position {pos} out of bounds, length is {len}")}
@@ -95,4 +95,4 @@ impl Display for Utf8Error {
 		}
 	}
 }
-impl std::error::Error for Utf8Error {}
+impl std::error::Error for Utf8Err {}

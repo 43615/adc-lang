@@ -11,7 +11,8 @@ use malachite::base::num::basic::traits::{Zero, One};
 use malachite::base::num::random::RandomPrimitiveInts;
 use regex::{Regex, RegexBuilder};
 use crate::{ExecResult, IOStreams, LogLevel};
-pub use crate::errors::Utf8Error;
+pub use crate::errors::Utf8Err;
+use Value::*;
 
 fn rng_with(bytes: [u8; 32]) -> RandomPrimitiveInts<u64> {
 	malachite::base::num::random::random_primitive_ints(malachite::base::random::Seed::from_bytes(bytes))
@@ -32,14 +33,13 @@ pub enum Value {
 }
 impl Default for Value {
 	fn default() -> Self {
-		Self::A(Vec::new())
+		A(Vec::new())
 	}
 }
 
 /// Non-recursive heap DFS to avoid overflowing the stack.
 impl Drop for Value {
 	fn drop(&mut self) {
-		use Value::*;
 		use std::mem::take;
 		if let A(a) = self {
 			let mut q: Vec<Vec<Value>> = vec![take(a)];	//init queue for arrays to be processed
@@ -59,7 +59,6 @@ impl Drop for Value {
 /// Non-recursive heap BFS to avoid overflowing the stack, using a monadic identity.
 impl Clone for Value {
 	fn clone(&self) -> Self {
-		use Value::*;
 		match self {
 			//scalar base cases
 			B(b) => B(b.clone()),
@@ -74,7 +73,6 @@ impl Clone for Value {
 
 impl PartialEq for Value {
 	fn eq(&self, other: &Self) -> bool {
-		use Value::*;
 		match (self, other) {
 			(A(aa), A(ab)) => {	//compare arrays, heap DFS
 				if aa.len() != ab.len() {return false;}
@@ -113,7 +111,6 @@ impl Eq for Value {}
 impl Value {
 	/// Prints scalar values, passing `A` is undefined behavior. `sb` prints brackets around strings.
 	unsafe fn display_scalar(&self, k: usize, o: &Natural, nm: NumOutMode, sb: bool) -> String {
-		use Value::*;
 		match self {
 			B(b) => {
 				b.iter().by_vals().map(|b| if b {'T'} else {'F'}).collect()
@@ -154,7 +151,6 @@ impl Value {
 	
 	/// Prints the value, heap DFS to avoid overflowing the stack. `sb` prints brackets around strings.
 	pub fn display(&self, k: usize, o: &Natural, nm: NumOutMode, sb: bool) -> String {
-		use Value::*;
 		match self {
 			A(a) => {	//the fun part
 				let mut stk: Vec<std::slice::Iter<Value>> = vec![a.iter()];
@@ -231,7 +227,7 @@ impl ThreadHandle {
 	/// `name` sets the thread's name, which is visible at the OS level [where supported](std::thread#naming-threads) and shown in ADC error messages.
 	/// Within ADC, the `X` command sets this to a [canonical pretty-print](reg_index_pretty) of the handle register's index.
 	/// Any NUL bytes in `name` are removed to avoid OS errors.
-	pub fn spawn(name: &str, mut st: State, start: String, io: Arc<Mutex<dyn IOStreams>>, ll: LogLevel, restrict: bool) -> std::io::Result<Self> {
+	pub fn spawn(name: &str, mut st: State, start: String, io: Arc<Mutex<dyn IOStreams + Send>>, ll: LogLevel, restrict: bool) -> std::io::Result<Self> {
 		let (ktx, krx) = std::sync::mpsc::channel::<()>();
 		let fin = Arc::new(Once::new());
 		let th_fin = Arc::clone(&fin);
@@ -606,8 +602,8 @@ impl Utf8Iter<'_> {
 	/// - Overlong encodings (3-byte below U+0800 or 4-byte below U+10000)
 	/// - UTF-16 surrogates (U+D800–DFFF)
 	/// - Values above U+10FFFF
-	pub fn try_next_char(&mut self) -> Result<char, Utf8Error> {
-		use Utf8Error::*;
+	pub fn try_next_char(&mut self) -> Result<char, Utf8Err> {
+		use Utf8Err::*;
 		let (bytes, pos): (&[u8], &mut usize) = match self {
 			Self::Borrowed {bytes, pos} => (bytes, pos),
 			Self::Owned {bytes, pos} => (bytes, pos)
@@ -739,7 +735,6 @@ impl Utf8Iter<'_> {
 	///
 	/// `Ok` contains the macros and repetition counts (omitting zero-count macros), and a flag indicating whether `sec` should be returned.
 	pub fn try_macros(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
-		use Value::*;
 		use crate::errors::TypeLabel;
 		use crate::conv::Promote2;
 		if let Some(sec) = sec {	//dyadic form
@@ -947,7 +942,11 @@ impl ParamStk {
 			unsafe { self.0.last_mut().unwrap_unchecked().0 = u; }
 			Ok(())
 		}
-		else {Err(const_format::concatcp!("Output precision must be a natural number <=", usize::MAX))}
+		else {Err(concat!("Output precision must be a natural number <= ", cfg_select! {
+			target_pointer_width = "16" => {"65535"}
+			target_pointer_width = "32" => {"4294967295"}
+			target_pointer_width = "64" => {"18446744073709551615"}
+		}))}
 	}
 
 	/// Checked edit of current input base
@@ -956,7 +955,7 @@ impl ParamStk {
 			unsafe { self.0.last_mut().unwrap_unchecked().1 = n; }
 			Ok(())
 		}
-		else {Err("Input base must be a natural number >=2, or 1 for factoradic")}
+		else {Err("Input base must be a natural number >= 2, or 1 for factoradic")}
 	}
 
 	/// Checked edit of current output base
@@ -965,7 +964,7 @@ impl ParamStk {
 			unsafe { self.0.last_mut().unwrap_unchecked().2 = n; }
 			Ok(())
 		}
-		else {Err("Output base must be a natural number >=2, or 1 for factoradic")}
+		else {Err("Output base must be a natural number >= 2, or 1 for factoradic")}
 	}
 
 	/// Checked edit of current output mode
@@ -1038,7 +1037,7 @@ impl From<ParamStk> for Vec<Params> {
 /// - `state.clear_vals();` instead of `state = State::default();`
 /// - `state.replace_vals(other);` instead of `state = other;`
 ///
-/// The "interpreter(...)" methods are just an alternative syntax for the functions in the [crate root](crate#functions).
+/// The `interpreter…` methods are just an alternative syntax for the functions in the [crate root](crate#functions).
 #[derive(Default, Debug, Clone)]
 pub struct State {
 	/// Main stack, [`Arc`] to allow shallow copies
@@ -1057,7 +1056,7 @@ pub struct State {
 /// Exports to state file with standard format
 impl Display for State {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}", String::from_utf8_lossy(&crate::STATE_FILE_HEADER))?;
+		write!(f, "{}", String::from_utf8_lossy(&Self::STATE_FILE_HEADER))?;
 		for (lri, lreg) in self.regs.low.iter().enumerate().filter(|(_, lreg)| !lreg.v.is_empty()) {
 			for val in &lreg.v {
 				writeln!(f, "{val}")?;
@@ -1088,6 +1087,9 @@ impl Display for State {
 	}
 }
 impl State {
+	/// Added at the start of saved state files
+	pub const STATE_FILE_HEADER: [u8; 20] = *b"# ADC state file v1\n";
+
 	/// Reallocates all fields to fit, does not discard any stored data.
 	pub fn trim(&mut self) {
 		self.mstk.shrink_to_fit();
@@ -1112,8 +1114,8 @@ impl State {
 	/// Finds any equal values and replaces them with shallow copies of one of them. Expensive O(n²) operation, use sparingly.
 	pub fn dedup(&mut self) {
 		let mut regs: Vec<&mut [Arc<Value>]> = vec![&mut self.mstk];	//queue up main stack
-		regs.extend(self.regs.low.iter_mut().filter_map(|reg| (!reg.v.is_empty()).then(|| &mut reg.v[..])));	//and low regs
-		regs.extend(self.regs.high.values_mut().filter_map(|reg| (!reg.v.is_empty()).then(|| &mut reg.v[..])));	//and high regs
+		regs.extend(self.regs.low.iter_mut().chain(self.regs.high.values_mut())
+			.filter_map(|reg| (!reg.v.is_empty()).then(|| &mut reg.v[..])));	//and all non-empty regs
 		while let Some(reg) = regs.pop() {
 			for i in 1..=reg.len() {	//goofy manual iteration to avoid redundant comparisons
 				let (done, rest) = unsafe { reg.split_at_mut_unchecked(i) };	//isolate unprocessed values
@@ -1125,7 +1127,7 @@ impl State {
 		}
 	}
 
-	/// Seed RNG with an initial value
+	/// Seed RNG with a preset value
 	pub fn seed_rng_with(&mut self, bytes: [u8; 32]) {
 		self.rng = Some(rng_with(bytes));
 	}
@@ -1140,6 +1142,11 @@ impl State {
 		self.rng = None;
 	}
 
+	/// Access RNG, or seed it with a preset value
+	pub fn get_rng_or_seed_with(&mut self, bytes: [u8; 32]) -> &mut RandomPrimitiveInts<u64> {
+		self.rng.get_or_insert_with(|| rng_with(bytes))
+	}
+
 	/// Access RNG, or seed it from the OS
 	pub fn get_rng_or_seed_from_os(&mut self) -> &mut RandomPrimitiveInts<u64> {
 		self.rng.get_or_insert_with(rng_from_os)
@@ -1149,7 +1156,7 @@ impl State {
 	pub unsafe fn interpreter(
 		&mut self,
 		start: Utf8Iter,
-		io: Arc<Mutex<dyn IOStreams>>,
+		io: Arc<Mutex<dyn IOStreams + Send>>,
 		ll: LogLevel,
 		kill: Option<&Receiver<()>>,
 		restrict: bool
@@ -1172,7 +1179,7 @@ impl State {
 	pub fn interpreter_no_os(
 		&mut self,
 		start: Utf8Iter,
-		io: Arc<Mutex<dyn IOStreams>>,
+		io: Arc<Mutex<dyn IOStreams + Send>>,
 		ll: LogLevel,
 		kill: Option<&Receiver<()>>,
 	) -> std::io::Result<ExecResult>

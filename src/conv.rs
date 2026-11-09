@@ -5,9 +5,8 @@ use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::num::conversion::traits::RoundingFrom;
 use malachite::base::rounding_modes::RoundingMode;
-
 use crate::errors::FnErr::{self, *};
-use crate::structs::Value;
+use crate::structs::Value::{self, *};
 
 pub fn r_u(ra: &Rational) -> Result<usize, FnErr> {
 	usize::try_from(ra).map_err(|_| Arith("Non-index given".into()))
@@ -81,7 +80,6 @@ impl<'a> TryFrom<(&'a Value, &'a Value)> for Promote2<'a> {
 	type Error = FnErr;
 
 	fn try_from(value: (&'a Value, &'a Value)) -> Result<Self, Self::Error> {
-		use Value::*;
 		match value {
 			(A(aa), A(ab)) => {
 				if aa.len() != ab.len() { Err(Len2(aa.len(), ab.len())) }
@@ -176,7 +174,6 @@ impl<'a> TryFrom<(&'a Value, &'a Value, &'a Value)> for Promote3<'a> {
 	type Error = FnErr;
 
 	fn try_from(value: (&'a Value, &'a Value, &'a Value)) -> Result<Self, Self::Error> {
-		use Value::*;
 		match value {
 			(A(aa), A(ab), A(ac)) => {
 				if aa.len() != ab.len() || ab.len() != ac.len() { Err(Len3(aa.len(), ab.len(), ac.len())) }

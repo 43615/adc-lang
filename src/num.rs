@@ -7,99 +7,6 @@ use malachite::base::num::basic::traits::{Zero, One, Two};
 use malachite::base::num::conversion::traits::{ExactFrom, Digits, WrappingFrom};
 use malachite::rational::rational::arithmetic::traits::Approximate;
 
-pub fn factoradic_digits(r: &Rational, k: usize) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
-	let sign = r.sign() == Less;
-	let mut i = Natural::exact_from(r.abs().floor());
-	let mut f = r.abs() - Rational::from(&i);
-	let mut ipart = Vec::new();
-	let mut fpart = Vec::new();
-
-	for d in 2usize.. {	//last factor of current place value, moving outwards:
-		if i!=Natural::ZERO {
-			let (q, r) = i.div_mod(Natural::from(d));
-			i = q;
-			ipart.push(r);
-		}
-		if f!=Rational::ZERO {
-			f *= Rational::from(d);
-			let r = (&f).floor();
-			f -= Rational::from(&r);
-			fpart.push(Natural::exact_from(r));
-		}
-		if i==Natural::ZERO && f==Rational::ZERO {break;}
-	}
-	ipart.reverse();
-	
-	if k == 0 || k >= ipart.len()+fpart.len() {	//unlimited precision or all digits fit
-		//do nothing
-	}
-	else if k >= ipart.len() {	//not all fractional digits fit
-		let len = k - ipart.len();
-		fpart.truncate(len + 1);
-		let mut place = len + 2;	//"base" (max+1) of current place
-		let mut inc = false;
-		let next = fpart.pop().unwrap();	//first discarded digit
-		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
-		if ord != Less {	//round remaining digits if next >= ceil(place/2)
-			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
-			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
-				if !to_even || d.odd() {	//only increment last digit if it's odd
-					*d += Natural::ONE;	//reused for carrying up after a continue
-				}
-				to_even = false;
-				if *d == place {	//roll over
-					*d = Natural::ZERO;
-					if inc {place += 1;}	//adjust for next digit
-					else if place == 2 {inc = true;}
-					else {place -= 1;}
-					continue;
-				}
-				else {
-					break;
-				}
-			}
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over
-				ipart.insert(0, Natural::ONE);	//add leading 1
-			}
-		}
-		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
-			fpart.pop();
-		}
-	}
-	else {	//not all integer digits fit
-		fpart.clear();
-		let mut len = ipart.len();
-		ipart.truncate(1 + k);
-		let mut place = 2 + len - k;	//"base" (max+1) of current place
-		let next = ipart.pop().unwrap();	//first discarded digit
-		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
-		if ord != Less {	//round remaining digits if next >= ceil(place/2)
-			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
-			for d in ipart.iter_mut().rev() {	//carry addition all the way up
-				if !to_even || d.odd() {	//only increment last digit if it's odd
-					*d += Natural::ONE;	//reused for carrying up after a continue
-				}
-				to_even = false;
-				if *d == place {	//roll over
-					*d = Natural::ZERO;
-					place += 1;	//adjust for next digit
-					continue;
-				}
-				else {
-					break;
-				}
-			}
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over
-				ipart.insert(0, Natural::ONE);	//add leading 1
-				len += 1;	//adjust target length
-			}
-		}
-		ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
-	}
-
-	(sign, ipart, fpart, Vec::new())
-}
-
 ///negative, integer, fractional, recurring
 pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
 	if *o == Natural::ONE {return factoradic_digits(r, k);}	//automatic fallback
@@ -198,6 +105,99 @@ pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<N
 	}
 
 	(sign, ipart, fpart, rpart)
+}
+
+pub fn factoradic_digits(r: &Rational, k: usize) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
+	let sign = r.sign() == Less;
+	let mut i = Natural::exact_from(r.abs().floor());
+	let mut f = r.abs() - Rational::from(&i);
+	let mut ipart = Vec::new();
+	let mut fpart = Vec::new();
+
+	for d in malachite::natural::exhaustive::exhaustive_natural_range_to_infinity(Natural::TWO) {	//last factor of current place value, moving outwards:
+		if i!=Natural::ZERO {
+			let (q, r) = i.div_mod(d.clone());
+			i = q;
+			ipart.push(r);
+		}
+		if f!=Rational::ZERO {
+			f *= Rational::from(d);
+			let r = (&f).floor();
+			f -= Rational::from(&r);
+			fpart.push(Natural::exact_from(r));
+		}
+		if i==Natural::ZERO && f==Rational::ZERO {break;}
+	}
+	ipart.reverse();
+
+	if k == 0 || k >= ipart.len()+fpart.len() {	//unlimited precision or all digits fit
+		//do nothing
+	}
+	else if k >= ipart.len() {	//not all fractional digits fit
+		let len = k - ipart.len();
+		fpart.truncate(len + 1);
+		let mut place = len + 2;	//"base" (max+1) of current place
+		let mut inc = false;
+		let next = fpart.pop().unwrap();	//first discarded digit
+		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
+		if ord != Less {	//round remaining digits if next >= ceil(place/2)
+			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
+			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
+				if !to_even || d.odd() {	//only increment last digit if it's odd
+					*d += Natural::ONE;	//reused for carrying up after a continue
+				}
+				to_even = false;
+				if *d == place {	//roll over
+					*d = Natural::ZERO;
+					if inc {place += 1;}	//adjust for next digit
+					else if place == 2 {inc = true;}
+					else {place -= 1;}
+					continue;
+				}
+				else {
+					break;
+				}
+			}
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over
+				ipart.insert(0, Natural::ONE);	//add leading 1
+			}
+		}
+		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
+			fpart.pop();
+		}
+	}
+	else {	//not all integer digits fit
+		fpart.clear();
+		let mut len = ipart.len();
+		ipart.truncate(1 + k);
+		let mut place = 2 + len - k;	//"base" (max+1) of current place
+		let next = ipart.pop().unwrap();	//first discarded digit
+		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
+		if ord != Less {	//round remaining digits if next >= ceil(place/2)
+			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
+			for d in ipart.iter_mut().rev() {	//carry addition all the way up
+				if !to_even || d.odd() {	//only increment last digit if it's odd
+					*d += Natural::ONE;	//reused for carrying up after a continue
+				}
+				to_even = false;
+				if *d == place {	//roll over
+					*d = Natural::ZERO;
+					place += 1;	//adjust for next digit
+					continue;
+				}
+				else {
+					break;
+				}
+			}
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over
+				ipart.insert(0, Natural::ONE);	//add leading 1
+				len += 1;	//adjust target length
+			}
+		}
+		ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
+	}
+
+	(sign, ipart, fpart, Vec::new())
 }
 
 ///digit to character byte: 0-9a-z
@@ -338,18 +338,14 @@ pub fn nsci(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural], 
 
 ///fractional notation from original
 pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
-	let (mut numer, mut denom) = r.to_numerator_and_denominator();
-
-	if k != 0 {
+	let (numer, denom) = if k == 0 {
+		r.to_numerator_and_denominator()
+	}
+	else {
 		let max = if *o != Natural::ONE { o.pow(k as u64) - Natural::ONE }
 		else { Natural::factorial(k as u64 + 1) - Natural::ONE };
-		if numer > denom {
-			(denom, numer) = r.reciprocal().approximate(&max).to_numerator_and_denominator();
-		}
-		else {
-			(numer, denom) = r.approximate(&max).to_numerator_and_denominator();
-		}
-	}
+		r.approximate(&max).into_numerator_and_denominator()
+	};
 	
 	let mut res = Vec::new();
 	
