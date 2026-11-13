@@ -1,4 +1,4 @@
-//! Storage structs and methods
+//! State storage and its components, with public APIs
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -7,11 +7,10 @@ use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::thread::JoinHandle;
 use bitvec::prelude::*;
 use malachite::{Natural, Rational};
-use malachite::base::num::basic::traits::{Zero, One};
 use malachite::base::num::random::RandomPrimitiveInts;
 use regex::{Regex, RegexBuilder};
 use crate::{ExecResult, IOStreams, LogLevel};
-pub use crate::errors::Utf8Err;
+use crate::Utf8Iter;
 use Value::*;
 
 fn rng_with(bytes: [u8; 32]) -> RandomPrimitiveInts<u64> {
@@ -220,7 +219,7 @@ pub struct ThreadHandle {
 	jh: JoinHandle<ThreadResult>
 }
 impl ThreadHandle {
-	/// Spawns a new interpreter thread, used by `X` command. Thread has an unbounded lifetime (`'static`) and may only be controlled using the returned handle.
+	/// Spawns a new interpreter thread, used by `X` command. Thread has an unbounded lifetime and may only be controlled using the returned handle.
 	///
 	/// Arguments are similar to the [main interpreter](crate::interpreter), but taken by value since the thread must own them.
 	///
@@ -263,7 +262,7 @@ impl ThreadHandle {
 
 	/// Terminates thread interpreter ASAP, propagates panic if disconnected. Kill signal is also received after interpreter is finished, for propagation upon [`Self::join`].
 	pub fn kill(&self) {
-		self.ktx.send(()).unwrap_or_else(|_| panic!("Thread panicked, terminating!"));
+		self.ktx.send(()).unwrap_or_else(|_| panic!("child thread panicked"));
 	}
 
 	/// Blocks waiting for the thread to finish and returns its result, or propagates thread's panic. Killing and joining is recursively propagated to child threads.
@@ -331,10 +330,10 @@ impl Drop for Register {
 	}
 }
 
-/// Register storage with different indexing modes
+/// Register storage with automatic hybrid indexing
 #[derive(Clone, Debug)]
 pub struct RegStore {
-	/// this covers ASCII integer values for frequently-accessed registers (commands like `sa`)
+	/// preallocated range for frequently-accessed registers with ASCII indices (commands like `sa`)
 	pub low: [Register; 128],
 
 	/// arbitrary rational indices otherwise
@@ -368,13 +367,8 @@ impl RegStore {
 			reg.v.shrink_to_fit();
 		}
 		self.high.retain(|_, reg| {
-			if reg.v.is_empty() {
-				reg.th.is_some()
-			}
-			else {
-				reg.v.shrink_to_fit();
-				true
-			}
+			reg.v.shrink_to_fit();
+			!reg.v.is_empty() || reg.th.is_some()
 		});
 		self.high.shrink_to_fit();
 	}
@@ -431,7 +425,7 @@ impl RegStore {
 	/// Returns messages from any unhappy terminations, same as the `j` command.
 	pub fn end_threads(&mut self, kill: bool) -> Vec<String> {
 		use crate::ExecResult::*;
-		
+
 		let mut res = Vec::new();
 		
 		for (ri_nice, reg) in
@@ -506,387 +500,6 @@ impl RegexCache {
 
 	pub(crate) fn clear(&self) {
 		*self.0.write().unwrap() = HashMap::new();
-	}
-}
-
-/// Hybrid iterator over UTF-8 strings, may be advanced by bytes or chars. Does not expect valid UTF-8 internally.
-///
-/// Convertible [`From`] owned|borrowed × bytes|strings. Manually set nonzero positions are handled as expected.
-///
-/// [`Self::try_next_char`] parses a [`char`] if it's valid UTF-8, and is used for [`TryInto<String>`].
-#[derive(Clone, Debug)]
-pub enum Utf8Iter<'a> {
-	Owned {
-		bytes: Vec<u8>,
-		pos: usize
-	},
-	Borrowed {
-		bytes: &'a [u8],
-		pos: usize
-	}
-}
-impl Default for Utf8Iter<'_> {
-	fn default() -> Self {
-		Self::Owned { bytes: Vec::new(), pos: 0 }
-	}
-}
-
-impl From<Vec<u8>> for Utf8Iter<'_> {
-	fn from(bytes: Vec<u8>) -> Self {
-		Self::Owned { bytes, pos: 0 }
-	}
-}
-impl<'a> From<&'a [u8]> for Utf8Iter<'a> {
-	fn from(bytes: &'a [u8]) -> Self {
-		Self::Borrowed { bytes, pos: 0 }
-	}
-}
-impl From<String> for Utf8Iter<'_> {
-	fn from(s: String) -> Self {
-		Self::Owned { bytes: s.into_bytes(), pos: 0 }
-	}
-}
-impl<'a> From<&'a str> for Utf8Iter<'a> {
-	fn from(s: &'a str) -> Self {
-		Self::Borrowed { bytes: s.as_bytes(), pos: 0 }
-	}
-}
-impl TryFrom<Utf8Iter<'_>> for String {
-	type Error = String;
-
-	fn try_from(mut value: Utf8Iter) -> Result<String, String> {
-		let mut res = String::new();
-		while !value.is_finished() {
-			res.push(value.try_next_char().map_err(|e| format!("At byte {}: {e}", {
-				match value {
-					Utf8Iter::Borrowed {pos, ..} => pos,
-					Utf8Iter::Owned {pos, ..} => pos
-				}
-			}))?);
-		}
-		Ok(res)
-	}
-}
-
-impl Iterator for Utf8Iter<'_> {
-	type Item = u8;
-
-	fn next(&mut self) -> Option<Self::Item> {
-		let (bytes, pos): (&[u8], &mut usize) = match self {
-			Self::Borrowed {bytes, pos} => (bytes, pos),
-			Self::Owned {bytes, pos} => (bytes, pos)
-		};
-		bytes.get(*pos).copied().inspect(|_| {*pos+=1;})
-	}
-
-	/// Lower and upper bound on remaining encoded `char`s, assuming valid UTF-8.
-	fn size_hint(&self) -> (usize, Option<usize>) {
-		let (bytes, pos): (&[u8], &usize) = match self {
-			Self::Borrowed {bytes, pos} => (bytes, pos),
-			Self::Owned {bytes, pos} => (bytes, pos)
-		};
-		let len = bytes.len().saturating_sub(*pos);
-		(len.div_ceil(4), Some(len))
-	}
-}
-
-impl Utf8Iter<'_> {
-	/// Parses one UTF-8 character starting at the current position, advancing the position in-place.
-	///
-	/// Errors on invalid byte sequences and reports the erroneous values (in ADC literal format), `pos` only advances if parsing is successful.
-	///
-	/// Handles all possible UTF-8 encoding errors:
-	/// - Invalid bytes: C0, C1, F5–FF
-	/// - Character starting with a continuation byte (80–BF)
-	/// - Multi-byte character with missing / non-continuation byte(s)
-	/// - Overlong encodings (3-byte below U+0800 or 4-byte below U+10000)
-	/// - UTF-16 surrogates (U+D800–DFFF)
-	/// - Values above U+10FFFF
-	pub fn try_next_char(&mut self) -> Result<char, Utf8Err> {
-		use Utf8Err::*;
-		let (bytes, pos): (&[u8], &mut usize) = match self {
-			Self::Borrowed {bytes, pos} => (bytes, pos),
-			Self::Owned {bytes, pos} => (bytes, pos)
-		};
-		if let Some(b0) = bytes.get(*pos).copied() {
-			let c;
-			match b0 {
-				//within ASCII
-				0x00..=0x7F => {
-					*pos += 1;
-					Ok(b0 as char)
-				}
-
-				//continuation byte
-				0x80..=0xBF => {
-					std::hint::cold_path();
-					Err(ContAtStart(b0))
-				}
-
-				//2-byte char
-				0xC2..=0xDF => {
-					if let Some(b1) = bytes.get(*pos+1).copied() {
-						if !(0x80..=0xBF).contains(&b1) {
-							return Err(NonCont2(b0, b1));
-						}
-						c = ((b0 & 0x1F) as u32) << 6
-							| (b1 & 0x3F) as u32;
-						//all good:
-						*pos += 2;
-						Ok(unsafe{char::from_u32_unchecked(c)})
-					}
-					else {
-						Err(Missing1(b0))
-					}
-				}
-
-				//3-byte char
-				0xE0..=0xEF => {
-					if let Some(b1) = bytes.get(*pos+1).copied() {
-						if let Some(b2) = bytes.get(*pos+2).copied() {
-							if !(0x80..=0xBF).contains(&b1) {
-								return Err(NonCont3(b0, b1, b2));
-							}
-							if !(0x80..=0xBF).contains(&b2) {
-								return Err(NonCont3(b0, b1, b2));
-							}
-							c = ((b0 & 0x0F) as u32) << 12
-								| ((b1 & 0x3F) as u32) << 6
-								| (b2 & 0x3F) as u32;
-							if c < 0x0800 {
-								return Err(Overlong3(c, b0, b1, b2));
-							}
-							if (0xD800u32..=0xDFFFu32).contains(&c) {
-								return Err(Utf16Surr(c, b0, b1, b2));
-							}
-							//all good:
-							*pos += 3;
-							Ok(unsafe{char::from_u32_unchecked(c)})
-						}
-						else {
-							Err(Missing2(b0, b1))
-						}
-					}
-					else {
-						Err(Missing1(b0))
-					}
-				}
-
-				//4-byte char
-				0xF0..=0xF4 => {
-					if let Some(b1) = bytes.get(*pos+1).copied() {
-						if let Some(b2) = bytes.get(*pos+2).copied() {
-							if let Some(b3) = bytes.get(*pos+3).copied() {
-								if !(0x80..=0xBF).contains(&b1) {
-									return Err(NonCont4(b0, b1, b2, b3));
-								}
-								if !(0x80..=0xBF).contains(&b2) {
-									return Err(NonCont4(b0, b1, b2, b3));
-								}
-								if !(0x80..=0xBF).contains(&b3) {
-									return Err(NonCont4(b0, b1, b2, b3));
-								}
-								c = ((b0 & 0x07) as u32) << 18
-									| ((b1 & 0x3F) as u32) << 12
-									| ((b2 & 0x3F) as u32) << 6
-									| (b3 & 0x3F) as u32;
-								if c < 0x10000 {
-									return Err(Overlong4(c, b0, b1, b2, b3));
-								}
-								if c > 0x10FFFF {
-									return Err(TooLarge(c, b0, b1, b2, b3));
-								}
-								//all good:
-								*pos += 4;
-								Ok(unsafe{char::from_u32_unchecked(c)})
-							}
-							else {
-								Err(Missing3(b0, b1, b2))
-							}
-						}
-						else {
-							Err(Missing2(b0, b1))
-						}
-					}
-					else {
-						Err(Missing1(b0))
-					}
-				}
-
-				0xC0 | 0xC1 | 0xF5..=0xFF => {
-					std::hint::cold_path();
-					Err(Impossible(b0))
-				}
-			}
-		}
-		else {
-			std::hint::cold_path();
-			Err(OutOfBounds(*pos, bytes.len()))
-		}
-	}
-	
-	/// Converts 1 or 2 [`Value`]s into a list of macros.
-	///
-	/// Nested array traversal using heap DFS with flattening. Value types should match the syntax in the ADC manual:
-	/// - If only `top` is given, it must be a string.
-	/// - If `top` and `sec` are given and `top` is a string, `sec` is not used and should be returned to the stack.
-	/// - Otherwise, `sec` must be a string, and the number/boolean in `top` decides how often to run `sec`.
-	/// - For arrays, the nesting layout and lengths must match exactly and the contained scalars must all be either strings or non-strings as above.
-	///
-	/// `Ok` contains the macros and repetition counts (omitting zero-count macros), and a flag indicating whether `sec` should be returned.
-	pub fn try_macros(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
-		use crate::errors::TypeLabel;
-		use crate::conv::Promote2;
-		if let Some(sec) = sec {	//dyadic form
-			if let Ok(res) = Self::try_macros(top, None) { return Ok(res); }	//see if monadic form succeeds (only strings in top), continue if not
-			match (sec, top) {
-				(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//traverse nested arrays
-					let mut stk = vec![Promote2::try_from((sec, top)).map_err(|e| e.to_string())?];
-					let mut res = Vec::new();
-
-					while let Some(it) = stk.last_mut() {	//keep operating on the top iters
-						if let Some((va, vb)) = it.next() {	//advance them
-							match (va, vb) {
-								(A(_), A(_)) | (A(_), _) | (_, A(_)) => {	//nested array(s)
-									let nit = Promote2::try_from((va, vb)).map_err(|e| e.to_string())?;
-									stk.push(nit);	//"recursive call"
-								},
-								(S(sa), B(bb)) => {
-									let nb = Natural::from(bb.count_ones());
-									if nb != Natural::ZERO {
-										res.push((sa.to_owned().into(), nb));
-									}
-								},
-								(S(sa), N(rb)) => {
-									if let Ok(nb) = Natural::try_from(rb) {
-										if nb != Natural::ZERO {
-											res.push((sa.to_owned().into(), nb));
-										}
-									}
-									else {
-										return Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)));
-									}
-								},
-								(_, S(_)) => {	//legitimate strings are already covered by monadic form attempt
-									return Err("Unexpected string in top array".into());
-								},
-								_ => {
-									return Err(format!("Expected only pairs of macro strings and non-strings, found {} and {} in arrays", TypeLabel::from(sec), TypeLabel::from(top)));
-								}
-							}
-						}
-						else {	//if top iters have ended
-							stk.pop();	//"return"
-						}
-					}
-
-					Ok((res, false))
-				},
-				//scalars:
-				(S(sa), B(bb)) => {
-					let nb = Natural::from(bb.count_ones());
-					if nb != Natural::ZERO {
-						Ok((vec![(sa.to_owned().into(), nb)], false))
-					}
-					else {Ok((vec![], false))}
-				},
-				(S(sa), N(rb)) => {
-					if let Ok(nb) = Natural::try_from(rb) {
-						if nb != Natural::ZERO {
-							Ok((vec![(sa.to_owned().into(), nb)], false))
-						}
-						else {Ok((vec![], false))}
-					}
-					else {
-						Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)))
-					}
-				},
-				(_, S(_)) => {	//already covered by monadic form attempt
-					unsafe { std::hint::unreachable_unchecked() }
-				},
-				_ => {
-					Err(format!("Expected a macro string and a non-string, {} and {} given", TypeLabel::from(sec), TypeLabel::from(top)))
-				}
-			}
-		}
-		else {	//monadic form
-			match top {
-				A(a) => {	//traverse nested array
-					let mut stk: Vec<std::slice::Iter<Value>> = vec![a.iter()];
-					let mut res = Vec::new();
-					while let Some(i) = stk.last_mut() {	//keep operating on the top iter
-						if let Some(val) = i.next() {	//advance it
-							match val {
-								A(na) => {	//nested array encountered
-									stk.push(na.iter());	//"recursive call"
-								},
-								S(s) => {	//string encountered
-									res.push((s.to_owned().into(), Natural::ONE));
-								},
-								_ => {
-									return Err(format!("Expected only macro strings, found {} in array", TypeLabel::from(val)));
-								}
-							}
-						}
-						else {	//if top iter has ended
-							stk.pop();	//"return"
-						}
-					}
-
-					Ok((res, true))
-				},
-				//scalar:
-				S(s) => {
-					Ok((vec![(s.to_owned().into(), Natural::ONE)], true))
-				},
-				_ => {
-					Err(format!("Expected a macro string, {} given", TypeLabel::from(top)))
-				}
-			}
-		}
-	}
-
-	pub(crate) fn is_finished(&self) -> bool {
-		let (bytes, pos): (&[u8], usize) = match self {
-			Self::Borrowed {bytes, pos} => (bytes, *pos),
-			Self::Owned {bytes, pos} => (bytes, *pos)
-		};
-		pos >= bytes.len()
-	}
-	
-	pub(crate) fn is_finished_trimmed(&self) -> bool {
-		let (bytes, mut pos): (&[u8], usize) = match self {
-			Self::Borrowed {bytes, pos} => (bytes, *pos),
-			Self::Owned {bytes, pos} => (bytes, *pos)
-		};
-		pos >= bytes.len()
-		||
-		loop {	//check if remainder is redundant
-			if matches!(crate::byte_cmd(bytes[pos]), crate::Command::Space) {
-				if bytes[pos] == b'#' {	//consume line comment
-					while let Some(b) = bytes.get(pos).copied() && b != b'\n' {pos += 1;}
-				}
-			}
-			else {break false;}	//non-whitespace found
-			pos += 1;
-			if pos >= bytes.len() {break true;}	//only whitespace found
-		}
-	}
-	
-	pub(crate) const fn back(&mut self) {
-		let pos = match self {
-			Self::Borrowed {pos, ..} => pos,
-			Self::Owned {pos, ..} => pos
-		};
-		*pos -= 1;
-	}
-
-	pub(crate) const fn rewind(&mut self) {
-		let pos = match self {
-			Self::Borrowed {pos, ..} => pos,
-			Self::Owned {pos, ..} => pos
-		};
-		*pos = 0;
 	}
 }
 

@@ -1,15 +1,15 @@
-//! ADC interpreter API. Many safe items are public for manual access.
+//! ADC interpreter API. Includes everything needed to make a custom wrapper as well as manually interact with the interpreter state.
 //! 
 //! The core function is [`interpreter`], see its documentation as a starting point.
 
-pub mod structs;
-use structs::*;
+pub mod state;
+use state::*;
 
 pub(crate) mod fns;
 
 pub(crate) mod cmds;
 
-pub(crate) mod errors;
+pub(crate) mod err;
 
 pub(crate) mod conv;
 
@@ -31,8 +31,9 @@ use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{Factorial, NegAssign, Pow};
 use malachite::base::num::basic::traits::{NegativeOne, Zero, One, Two};
 use malachite::base::num::conversion::traits::{PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
-use errors::TypeLabel;
-use structs::Value::*;
+use err::TypeLabel;
+use state::Value::*;
+pub use {conv::Utf8Iter, err::Utf8Err};
 
 struct LineEditor(Interface<DefaultTerminal>);
 

@@ -5,7 +5,7 @@ use std::io::{ErrorKind, Read, Seek, Write};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use adc_lang::*;
-use adc_lang::structs::{State, Utf8Iter};
+use state::State;
 
 const HELP: &str = "\
 ADC: Array-oriented reimagining of dc, a terse RPN esolang (built-in executable CLI wrapper)

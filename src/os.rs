@@ -7,8 +7,8 @@ use std::io::{Read, Write};
 use std::process::{Command, Stdio, Child};
 use std::sync::Mutex;
 use bitvec::prelude::*;
-use crate::errors::TypeLabel;
-use crate::structs::{Value::{self, *}, State, Utf8Iter};
+use crate::err::TypeLabel;
+use crate::state::{Value::{self, *}, State};
 
 /// OS command definition
 pub type OsCmd = fn(&mut State) -> Result<Vec<Value>, String>;
@@ -327,7 +327,7 @@ oscmd!(load, st {
 								Err(format!("State file '{name}' is invalid"))
 							}
 							else {
-								let st_mac = Utf8Iter::from(v);
+								let st_mac = crate::Utf8Iter::from(v);
 								let mut new_st = State::default();
 								
 								let res = crate::interpreter_simple(&mut new_st, st_mac, None);	//one recursive call as a treat

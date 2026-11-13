@@ -1,7 +1,7 @@
 //! The most boring module
 
 use std::fmt::{Display, Formatter};
-use crate::structs::Value::{self, *};
+use crate::state::Value::{self, *};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FnErr {
@@ -58,7 +58,7 @@ impl Display for TypeLabel {
 	}
 }
 
-/// Custom rich error type for [`Utf8Iter`](crate::structs::Utf8Iter). Byte values are displayed using ADC's string literal syntax.
+/// Custom rich error type for [`Utf8Iter`](crate::Utf8Iter). Byte values are displayed using ADC's string literal syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[must_use] pub enum Utf8Err {
 	OutOfBounds(usize, usize),

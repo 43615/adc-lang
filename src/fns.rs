@@ -11,8 +11,8 @@ use malachite::base::num::arithmetic::traits::*;
 use malachite::base::num::basic::traits::{NegativeOne, Zero, OneHalf, One};
 use malachite::base::num::comparison::traits::PartialOrdAbs;
 use malachite::base::num::conversion::traits::{PowerOf2Digits, PowerOf2DigitIterable};
-use crate::errors::FnErr::{self, *};
-use crate::structs::{Value::{self, *}, Utf8Iter};
+use crate::err::FnErr::{self, *};
+use crate::state::Value::{self, *};
 use crate::conv::*;
 use crate::RE_CACHE;
 

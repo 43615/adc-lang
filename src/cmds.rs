@@ -4,8 +4,8 @@
 //!
 //! Errors ending in `!` are displayed as syntax errors, others as value errors (in-band hack to keep the return type composable).
 
-use crate::errors::TypeLabel;
-use crate::structs::{Value::{self, *}, State};
+use crate::err::TypeLabel;
+use crate::state::{Value::{self, *}, State};
 
 /// Impure command
 pub type Cmd = fn(&mut State) -> Result<Vec<Value>, String>;
