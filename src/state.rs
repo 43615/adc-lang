@@ -555,7 +555,7 @@ impl ParamStk {
 			unsafe { self.0.last_mut().unwrap_unchecked().0 = u; }
 			Ok(())
 		}
-		else {Err(concat!("Output precision must be a natural number <= ", cfg_select! {
+		else {Err(concat!("Output precision must be a natural number <= ", cfg_select! {	//usize::MAX exists but nooo this has to be a *literal*
 			target_pointer_width = "16" => {"65535"}
 			target_pointer_width = "32" => {"4294967295"}
 			target_pointer_width = "64" => {"18446744073709551615"}

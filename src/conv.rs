@@ -417,13 +417,10 @@ impl Utf8Iter<'_> {
 									}
 								},
 								(S(sa), N(rb)) => {
-									if let Ok(nb) = Natural::try_from(rb) {
-										if nb != Natural::ZERO {
-											res.push((sa.to_owned().into(), nb));
-										}
-									}
-									else {
-										return Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)));
+									let Ok(nb) = Natural::try_from(rb)
+										else {return Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)));};
+									if nb != Natural::ZERO {
+										res.push((sa.to_owned().into(), nb));
 									}
 								},
 								(_, S(_)) => {	//legitimate strings are already covered by monadic form attempt
@@ -450,15 +447,12 @@ impl Utf8Iter<'_> {
 					else {Ok((vec![], false))}
 				},
 				(S(sa), N(rb)) => {
-					if let Ok(nb) = Natural::try_from(rb) {
-						if nb != Natural::ZERO {
-							Ok((vec![(sa.to_owned().into(), nb)], false))
-						}
-						else {Ok((vec![], false))}
+					let Ok(nb) = Natural::try_from(rb)
+						else {return Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)));};
+					if nb != Natural::ZERO {
+						Ok((vec![(sa.to_owned().into(), nb)], false))
 					}
-					else {
-						Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)))
-					}
+					else {Ok((vec![], false))}
 				},
 				(_, S(_)) => {	//already covered by monadic form attempt
 					unsafe { std::hint::unreachable_unchecked() }

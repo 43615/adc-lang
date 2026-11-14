@@ -20,74 +20,50 @@ macro_rules! cmd {
 
 //   k
 cmd!(sk, st {
-	if let Some(va) = st.mstk.pop() {
-		if let N(r) = &*va {
-			st.params.try_set_k(r)?;
-			Ok(vec![])
-		}
-		else {
-			let ta = TypeLabel::from(&*va);
-			st.mstk.push(va);
-			Err(format!("Expected number, {} given!", ta))
-		}
-	}
-	else {
-		Err("Expected 1 argument, 0 given!".into())
-	}
+	let Some(va) = st.mstk.pop() else {return Err("Expected 1 argument, 0 given!".into());};
+	let N(r) = &*va else {
+		let ta = TypeLabel::from(&*va);
+		st.mstk.push(va);
+		return Err(format!("Expected number, {} given!", ta));
+	};
+	st.params.try_set_k(r)?;
+	Ok(vec![])
 });
 
 //   i
 cmd!(si, st {
-	if let Some(va) = st.mstk.pop() {
-		if let N(r) = &*va {
-			st.params.try_set_i(r)?;
-			Ok(vec![])
-		}
-		else {
-			let ta = TypeLabel::from(&*va);
-			st.mstk.push(va);
-			Err(format!("Expected number, {} given!", ta))
-		}
-	}
-	else {
-		Err("Expected 1 argument, 0 given!".into())
-	}
+	let Some(va) = st.mstk.pop() else {return Err("Expected 1 argument, 0 given!".into());};
+	let N(r) = &*va else {
+		let ta = TypeLabel::from(&*va);
+		st.mstk.push(va);
+		return Err(format!("Expected number, {} given!", ta));
+	};
+	st.params.try_set_i(r)?;
+	Ok(vec![])
 });
 
 //   o
 cmd!(so, st {
-	if let Some(va) = st.mstk.pop() {
-		if let N(r) = &*va {
-			st.params.try_set_o(r)?;
-			Ok(vec![])
-		}
-		else {
-			let ta = TypeLabel::from(&*va);
-			st.mstk.push(va);
-			Err(format!("Expected number, {} given!", ta))
-		}
-	}
-	else {
-		Err("Expected 1 argument, 0 given!".into())
-	}
+	let Some(va) = st.mstk.pop() else {return Err("Expected 1 argument, 0 given!".into());};
+	let N(r) = &*va else {
+		let ta = TypeLabel::from(&*va);
+		st.mstk.push(va);
+		return Err(format!("Expected number, {} given!", ta));
+	};
+	st.params.try_set_o(r)?;
+	Ok(vec![])
 });
 
 //   m
 cmd!(sm, st {
-	if let Some(va) = st.mstk.pop() {
-		if let N(r) = &*va {
-			st.params.try_set_m(r)?;
-			Ok(vec![])
-		}
-		else {
-			let ta = TypeLabel::from(&*va);
-			st.mstk.push(va);
-			Err(format!("Expected number, {} given!", ta))
-		}
-	}
-	else {
-		Err("Expected 1 argument, 0 given!".into())
-	}
+	let Some(va) = st.mstk.pop() else {return Err("Expected 1 argument, 0 given!".into());};
+	let N(r) = &*va else {
+		let ta = TypeLabel::from(&*va);
+		st.mstk.push(va);
+		return Err(format!("Expected number, {} given!", ta));
+	};
+	st.params.try_set_m(r)?;
+	Ok(vec![])
 });
 
 //   K
@@ -130,33 +106,23 @@ cmd!(cls, st {
 
 //   C
 cmd!(cln, st {
-	if let Some(va) = st.mstk.pop() {
-		if let N(r) = &*va {
-			if let Ok(u) = usize::try_from(r) {
-				if let Some(len) = st.mstk.len().checked_sub(u) {
-					st.mstk.truncate(len);
-					Ok(vec![])
-				}
-				else {
-					st.mstk.push(va);
-					Err(format!("Can't clear {} values, stack depth is {}", u, st.mstk.len() - 1))
-				}
-			}
-			else {
-				let vs = va.to_string();
-				st.mstk.push(va);
-				Err(format!("Can't possibly clear {} values", vs))
-			}
-		}
-		else {
-			let ta = TypeLabel::from(&*va);
-			st.mstk.push(va);
-			Err(format!("Expected number, {} given!", ta))
-		}
-	}
-	else {
-		Err("Expected 1 argument, 0 given!".into())
-	}
+	let Some(va) = st.mstk.pop() else {return Err("Expected 1 argument, 0 given!".into());};
+	let N(r) = &*va else {
+		let ta = TypeLabel::from(&*va);
+		st.mstk.push(va);
+		return Err(format!("Expected number, {} given!", ta));
+	};
+	let Ok(u) = usize::try_from(r) else {
+		let vs = va.to_string();
+		st.mstk.push(va);
+		return Err(format!("Can't possibly clear {} values", vs));
+	};
+	let Some(len) = st.mstk.len().checked_sub(u) else {
+		st.mstk.push(va);
+		return Err(format!("Can't clear {} values, stack depth is {}", u, st.mstk.len() - 1));
+	};
+	st.mstk.truncate(len);
+	Ok(vec![])
 });
 
 //   r

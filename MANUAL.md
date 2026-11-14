@@ -246,7 +246,7 @@ Since nesting is required for any complex program, string input uses `[square br
 - `\[` and `\]`: Unpaired square brackets (5B, 5D), not processed as string delimiters. These need to be escaped multiple (2ⁿ-1) times in nested strings, as one would do with quotes in other languages ("backslash explosion"). Example: Executing `[[[foo\\\\\\\]bar]]]` parses it into `[[foo\\\]bar]]`, then `[foo\]bar]` and finally `foo]bar` (as it would be printed).
   - A nicer alternative is to use [type conversion](#type-conversion): Instead of `[foo\]bar]`, the desired string can be assembled like `[foo]93A+[bar]+`, which will be preserved through nested parsing and only executed at the bottom level.
 - `\XX`: Byte literal with exactly two hexadecimal digits (uppercase). Must form a valid UTF-8 sequence, string is rejected otherwise.
-- If the string opens with `` `[ ``, all backslash escapes are disabled.
+- Raw mode: If the string opens with `` `[ ``, all backslash escapes are disabled.
 
 Strings also use overloaded variants of arithmetic functions:
 - `Sa Sb + → Sz` concatenates *a* and *b*.

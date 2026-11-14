@@ -107,8 +107,8 @@ fn main() -> ExitCode {
 			else {	//short-form flags:
 				let mut chars = flag.chars();
 				//only take the first char as a flag
-				let short = if let Some(c) = chars.next() {c}
-					else { return syntax_error("Empty flag: -".into()); };
+
+				let Some(short) = chars.next() else {return syntax_error("Empty flag: -".into());};
 				args.push(Flag(short));
 				//add the rest as a plain arg
 				let plain: String = chars.collect();
@@ -194,38 +194,26 @@ fn main() -> ExitCode {
 			}
 
 			Flag('s') => {
-				if let Some(Plain(path)) = args.peek() {	//consume one arg as filename
-					args.next();
-					if let Some(Plain(_)) = args.peek() {
-						return syntax_error("Save option may only have one argument".into());
+				let Some(Plain(path)) = args.peek() else {return syntax_error("Save option needs a file path".into());};	//consume one arg as filename
+				args.next();
+				if let Some(Plain(_)) = args.peek() {return syntax_error("Save option may only have one argument".into());}
+				acts.push(Save(
+					match try_writing_fd(path) {
+						Ok(fd) => {fd}
+						Err(e) => {return e;}
 					}
-					acts.push(Save(
-						match try_writing_fd(path) {
-							Ok(fd) => {fd}
-							Err(e) => {return e;}
-						}
-					));
-				}
-				else {
-					return syntax_error("Save option needs a file path".into());
-				}
+				));
 			}
 			Flag('l') => {
-				if let Some(Plain(path)) = args.peek() {	//consume one arg as filename
-					args.next();
-					if let Some(Plain(_)) = args.peek() {
-						return syntax_error("Load option may only have one argument".into());
+				let Some(Plain(path)) = args.peek() else {return syntax_error("Load option needs a file path".into());};	//consume one arg as filename
+				args.next();
+				if let Some(Plain(_)) = args.peek() {return syntax_error("Load option may only have one argument".into());}
+				acts.push(Load(
+					match try_reading_fd(path) {
+						Ok(fd) => {fd}
+						Err(e) => {return e;}
 					}
-					acts.push(Load(
-						match try_reading_fd(path) {
-							Ok(fd) => {fd}
-							Err(e) => {return e;}
-						}
-					));
-				}
-				else {
-					return syntax_error("Load option needs a file path".into());
-				}
+				));
 			}
 
 			Flag('r') => { restrict = true; }
@@ -239,18 +227,12 @@ fn main() -> ExitCode {
 			}
 			Flag('t') if !tee => {
 				tee = true;
-				if let Some(Plain(path)) = args.peek() {	//consume one arg as filename
-					args.next();
-					if let Some(Plain(_)) = args.peek() {
-						return syntax_error("Tee option may only have one argument".into());
-					}
-					match try_appending_fd(path) {
-						Ok(fd) => {io = Some(Arc::new(Mutex::new(TeeProcessIO::new(fd))));}
-						Err(e) => {return e;}
-					}
-				}
-				else {
-					return syntax_error("Tee option needs a file path".into());
+				let Some(Plain(path)) = args.peek() else {return syntax_error("Tee option needs a file path".into());};	//consume one arg as filename
+				args.next();
+				if let Some(Plain(_)) = args.peek() {return syntax_error("Tee option may only have one argument".into());}
+				match try_appending_fd(path) {
+					Ok(fd) => {io = Some(Arc::new(Mutex::new(TeeProcessIO::new(fd))));}
+					Err(e) => {return e;}
 				}
 			}
 			Flag('t') if tee => {
