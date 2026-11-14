@@ -340,19 +340,12 @@ fn main() -> ExitCode {
 				if let Err(c) = fd.write_all(st.to_string().as_bytes()).map_err(map) {return c;}
 			}
 			Load(mut fd) => {
-				//state files are just ADC scripts
 				let mut st_script = Vec::new();
 				if let Err(c) = fd.read_to_end(&mut st_script).map_err(|e| {runtime_error(format!("Can't read from state file: {e}"))}) {return c;}
-				if !st_script.starts_with(&State::STATE_FILE_HEADER) {return runtime_error("Invalid state file".into());}
-				let start = Utf8Iter::from(st_script);
-
-				let mut nst = State::default();
-
-				let res = interpreter_simple(&mut nst, start, None);	//delegate to normal interpreter
-
-				if !matches!(res, Ok(Finished)) {return runtime_error("Invalid state file".into());}	//state files don't quit
-				
-				st.replace_vals(nst);
+				match State::try_from(st_script.as_slice()) {
+					Ok(nst) => {st.replace_vals(nst);},
+					Err(()) => {return runtime_error("Invalid state file".into());}
+				}
 			}
 		}
 	}

@@ -651,6 +651,8 @@ impl From<ParamStk> for Vec<Params> {
 /// - `state.replace_vals(other);` instead of `state = other;`
 ///
 /// The `interpreter…` methods are just an alternative syntax for the functions in the [crate root](crate#functions).
+///
+/// The [`Display`] implementation produces a custom format that can be executed as an ADC script in order to restore it. This can be done manually or using the [`TryFrom`] impl below.
 #[derive(Default, Debug, Clone)]
 pub struct State {
 	/// Main stack, [`Arc`] to allow shallow copies
@@ -666,7 +668,7 @@ pub struct State {
 	pub rng: Option<RandomPrimitiveInts<u64>>
 }
 
-/// Exports to state file with standard format
+/// Serializes it in a standard format, typically for saving as a state file. RNG state is not included.
 impl Display for State {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{}", String::from_utf8_lossy(&Self::STATE_FILE_HEADER))?;
@@ -697,6 +699,19 @@ impl Display for State {
 			v.join("{")
 		})?;
 		Ok(())
+	}
+}
+/// Attempts to deserialize from a previous [`Display`] output, with some basic format checks. Do not use with untrusted input, as creating a malicious script is trivial.
+impl TryFrom<&[u8]> for State {
+	type Error = ();
+
+	fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+		if !value.starts_with(&Self::STATE_FILE_HEADER) {return Err(());}
+		let start = Utf8Iter::from(value);
+		let mut st = Self::default();
+		let res = st.interpreter_simple(start, None);
+		if !matches!(res, Ok(ExecResult::Finished)) {return Err(());}
+		Ok(st)
 	}
 }
 impl State {

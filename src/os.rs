@@ -299,25 +299,15 @@ oscmd!(load, st {
 		Ok(mut fd) => {
 			match fd.read_to_end(&mut v) {
 				Ok(_) => {
-					if !v.starts_with(&State::STATE_FILE_HEADER) {
-						let name = name.to_owned();
-						st.mstk.push(va);
-						Err(format!("State file '{name}' is invalid"))
-					}
-					else {
-						let st_mac = crate::Utf8Iter::from(v);
-						let mut new_st = State::default();
-
-						let res = crate::interpreter_simple(&mut new_st, st_mac, None);	//one recursive call as a treat
-
-						if !matches!(res, Ok(crate::ExecResult::Finished)) {
+					match State::try_from(v.as_slice()) {
+						Ok(nst) => {
+							st.replace_vals(nst);
+							Ok(vec![])
+						},
+						Err(()) => {
 							let name = name.to_owned();
 							st.mstk.push(va);
 							Err(format!("State file '{name}' is invalid"))
-						}
-						else {
-							st.replace_vals(new_st);
-							Ok(vec![])
 						}
 					}
 				},

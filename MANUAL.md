@@ -192,6 +192,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
   - If higher precision is desired, compute it using an infinite series or similar. TODO: make scripts for that
 - `NNa N → NNz` generates a random natural number less than *a* with a uniform distribution. RNG is seeded with 256 bits from [an OS source ⎋](https://docs.rs/getrandom/latest/getrandom/index.html#supported-targets) on first use.
   - `` NZa `N `` seeds the RNG with *a* if positive, taking the lowest 256 bits. If *a* is `` `1 ``, it's reset to be seeded from the OS again.
+  - The RNG state is part of the interpreter `State`, but isn't saved/loaded with it. The [internal implementation ⎋](https://docs.rs/rand_chacha/latest/rand_chacha/struct.ChaCha20Rng.html) is based on ChaCha20 and should have adequate properties for most purposes.
 - `NFa NZb t → NFz`: Monadic trigonometric/hyperbolic functions of *a* (angles in radians), selected by *b*:
   - `1`: sine
   - `2`: cosine
@@ -351,7 +352,7 @@ Registers are auxiliary stacks, identified by rational indices. Commands that op
 
 Strings containing ADC commands are called macros, to differentiate them from data strings. They can be executed with the `x` command, which has several overloaded modes:
 - `SMa x` simply executes macro *a*.
-  - Execution of nested macros is performed pseudorecursively using a call stack in heap memory. Nesting depth is practically unlimited, tail calls are optimized.
+  - Execution of nested macros is performed pseudorecursively using a virtual stack in heap memory. Nesting depth is practically unlimited, tail calls are optimized away (including trailing no-ops).
 - `SMa NNb x` executes *a* *b* times.
 - `SMa Bb x` executes *a* once for every `T` bit in *b*.
 - If the arguments are arrays, their contents are executed analogously, first element first. The arrays are effectively flattened and appended to the call stack in reverse order. *a* must only contain macros, *b* (if used) can't contain any strings. For the dyadic form, the array lengths and nesting topologies must match exactly (as [usual](#array-polymorphism)).
@@ -382,8 +383,8 @@ Macro execution may also be delegated to a separate thread. Child threads are at
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
 - `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving actual data unchanged. Use after operations that need large temporary values.
-- `_dedup` finds any equal values in the whole state and replaces them with shallow copies of just one of them. Requires O(n²) time, use sparingly.
-- `_clall` clears the entire current state. Thread handles are unaffected.
+- `_dedup` finds any equal values in the whole `State` and replaces them with shallow copies of just one of them. Requires O(n²) time, use sparingly.
+- `_clall` clears the entire current `State`. Thread handles are unaffected.
 
 
 # OS commands
@@ -409,8 +410,8 @@ Most strings involved here are not guaranteed to be valid UTF-8, particularly on
 
 ## File operations
 
-- `Sa _save` saves the current state to a file specified by a path in *a*. State files are just ADC scripts that follow a special format.
-- `Sa _load` loads state file *a* if it's valid, overwriting the current state.
+- `Sa _save` saves the current `State` to a file specified by a path in *a*. A state file can just be executed as an ADC script.
+- `Sa _load` loads state file *a* if it's valid, overwriting the current `State`. Do not use with untrusted input, as creating a malicious script is trivial.
 - `Sa Sb _write` writes *a* to file *b*, creating/overwriting it if necessary.
 - `Sa Sb _append` appends *a* to the end of file *b*, creating it if necessary.
 - `Sa _read → Sz` reads file *a* into a string, erroring if it doesn't exist.

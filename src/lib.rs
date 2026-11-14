@@ -1,4 +1,4 @@
-//! ADC interpreter API. Includes everything needed to make a custom wrapper as well as manually interact with the interpreter state.
+//! ADC interpreter API. Includes everything needed to make a custom wrapper, as well as manually read/edit the interpreter state.
 //! 
 //! The core function is [`interpreter`], see its documentation as a starting point.
 
