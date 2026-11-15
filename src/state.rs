@@ -421,7 +421,7 @@ impl RegStore {
 	}
 
 	/// Joins all thread handles and saves their resulting values, `kill = true` first sends kill signals.
-	/// 
+	///
 	/// Returns messages from any unhappy terminations, same as the `j` command.
 	pub fn end_threads(&mut self, kill: bool) -> Vec<String> {
 		use crate::ExecResult::*;
@@ -789,7 +789,7 @@ impl State {
 		kill: Option<&Receiver<()>>,
 		restrict: bool
 	) -> std::io::Result<ExecResult>
-	{ 
+	{
 		unsafe { crate::interpreter(self, start, io, ll, kill, restrict) }
 	}
 

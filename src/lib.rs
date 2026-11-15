@@ -1,5 +1,5 @@
 //! ADC interpreter API. Includes everything needed to make a custom wrapper, as well as manually read/edit the interpreter state.
-//! 
+//!
 //! The core function is [`interpreter`], see its documentation as a starting point.
 
 pub mod state;
@@ -115,7 +115,7 @@ pub trait IOStreams {
 	fn print(&mut self, buf: String) -> std::io::Result<()>;
 
 	/// Print `buf` to the error stream, flush if applicable.
-	/// 
+	///
 	/// Errors are returned early from the interpreter.
 	fn eprint(&mut self, buf: String) -> std::io::Result<()>;
 }
@@ -370,7 +370,7 @@ pub unsafe fn interpreter_no_io(
 }
 
 /// Interpreter entry point, executes ADC commands to modify state.
-/// 
+///
 /// This function and its variants are also available as methods of [`State`] if such syntax is preferred.
 ///
 /// # Arguments

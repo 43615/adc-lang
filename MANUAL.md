@@ -43,11 +43,11 @@ In the following documentation, types expected by commands are annotated in a co
 - `B`: Boolean
   - `BB`: Exactly one bit
 - `N`: Number
-  - `NN`: Natural
   - `NZ`: Integer
+  - `NN`: Natural
+  - `NP`: Pointer-sized natural, 16/32/64 bits depending on system architecture (0 - 2ⁿ-1)
   - `NC`: Unicode character ("scalar") value, any natural up to 1114111 (0x10FFFF) but excluding 55296 - 57343 (0xD800 - 0xDFFF)
-  - `NP`: Pointer-sized natural, 32 or 64 bits depending on system architecture (0 - 2ⁿ-1)
-  - `NF`: Number is converted to/from floating-point (IEEE 754 64-bit) for calculation, see [below](#numbers)
+  - `NF`: Rational that is convertible to a floating-point number (IEEE 754 64-bit)
 - `S`: String
   - `SC`: Exactly one character
   - `SM`: Macro, a valid sequence of ADC commands (not verified before execution)
@@ -159,7 +159,7 @@ The parameters are stored in bundles like (K, I, O, M), called a "context". Thes
 - `Na Nb - → Nz`: *a* minus *b*.
 - `Na Nb * → Nz`: *a* times *b*.
 - `Na Nb / → Nz`: *a* divided by *b*. Errors if *b* = 0.
-  - `` Na Nb `/ → Nz ``: Greatest common divisor of *a* and *b*. *z* is the largest rational such that *a*/*z* ∈ ℤ and *b*/*z* ∈ ℤ. If *a* = 0, *z* = |*b*| and vice versa.
+  - `` Na Nb `/ → Nz ``: Greatest common divisor of *a* and *b*. *z* is the largest rational such that {*a*/*z*, *b*/*z*} ⊂ ℤ. If *a* = 0, *z* = |*b*| and vice versa.
 - `Na ! → Nz`: Reciprocal of *a*.
 - `NFa NFb ^ → NFz`: *a* to the power *b*. Errors if *a* = 0 and *b* < 0.
   - `Na NZb ^ → Nz`: Exact integer power if 0 ≤ |*b*| ≤ 2⁶⁴-1.
@@ -256,7 +256,7 @@ Strings also use overloaded variants of arithmetic functions:
 - `Sa NPb / → Sz` truncates *a* to *b* characters. No effect if *b* exceeds the length.
 - `Sa ! → Sz` inverts the case of all characters in *a*, where applicable.
 - `Sa Sb ^ → NZz` finds the first occurrence of *b* in *a* and returns its position, `` `1 `` if not found.
-  - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here ⎋](https://docs.rs/regex/latest/regex/index.html#syntax), ensure that backslashes are escaped correctly.
+  - `` Sa Sb `^ → (NZy NPz) `` finds the first match of regex *b* in *a* and returns its position *y* and length *z*, `` (`1 0) `` if not found. Regex syntax is documented [here ⎋](https://docs.rs/regex/latest/regex/index.html#syntax), using `` `[raw mode] `` is recommended.
 - `Sa v → Sz` reverses *a*.
 - `Sa g → NPz`: length of *a*.
   - `` Sa `g → NPz ``: byte length of *a*.
@@ -322,6 +322,7 @@ The scope of array input is limited to macro boundaries. The end of a macro impl
 
 Array commands are digraphs beginning with `a`. Since they operate on whole arrays, the usual [polymorphism](#array-polymorphism) does not apply. Instead, nested arrays have to be indexed into.
 
+
 ## Indexing
 
 The valid forms of an array index (`NI`) are:
@@ -375,8 +376,9 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 
 # Other commands
 
-- `Xa z → NNz` converts a value into its type discriminant: Boolean is `1`, number is `2`, string is `3`.
-- `NNa w` waits for *a* nanoseconds. Actual time may be different depending on platform/scheduling details.
+- `Xa z → Sz` converts a value into its type discriminant (`B`/`N`/`S`).
+  - `` Xa `z → Sz `` determines the most specific value range containing *a*, out of the [type subsets](#type-annotations-and-restricted-types) used in this documentation. `BB`⊂`B`; `NC`⊂`NP` (except on 16-bit systems); `NP`⊂`NN`⊂`NZ`⊂`N`; `NF`⊂`N`; `SC`⊂`S`. `SM` is never returned, as macro validity is not generally decidable in advance.
+- `NNa w` waits for *a* nanoseconds. Actual time may be different depending on platform/scheduling details. The [thread kill signal](#multithreading) will also be received while waiting.
 - `W → NZz`: current system time in nanoseconds from the Unix epoch (1970-01-01 00:00:00 UTC). Full precision and monotonicity not guaranteed.
 - `q` quits the ADC interpreter. If the [register pointer](#registers) is set, the lowest byte of its integer part is returned as the exit code.
   - `` `q `` is a "hard" quit, which may be handled differently.

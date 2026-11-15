@@ -1,5 +1,5 @@
 //! Pure functions and rank-polymorphic execution engine
-//! 
+//!
 //! Functions have 1, 2, or 3 `&Value` parameters (monadic, dyadic, triadic) and a boolean mode switch (false by default, enabled by \` command).
 
 use std::collections::VecDeque;
@@ -620,9 +620,37 @@ tri!(bar
 
 //   z
 mon!(disc
-	B(_), _ => Ok(N(Rational::const_from_unsigned(1))),
-	N(_), _ => Ok(N(Rational::const_from_unsigned(2))),
-	S(_), _ => Ok(N(Rational::const_from_unsigned(3)))
+	B(_), false => Ok(S("B".into())),
+	N(_), false => Ok(S("N".into())),
+	S(_), false => Ok(S("S".into())),
+
+	B(ba), true => {
+		Ok(S(
+			if ba.len() == 1 {"BB".into()} else {"B".into()}
+		))
+	},
+
+	N(ra), true => {
+		if let Ok(i) = Integer::try_from(ra) {
+			if let Ok(n) = Natural::try_from(i) {
+				if u32::try_from(&n).is_ok_and(|u| char::try_from(u).is_ok()) {Ok(S("NC".into()))}
+				else if usize::try_from(&n).is_ok() {Ok(S("NP".into()))}
+				else {Ok(S("NN".into()))}
+			}
+			else {Ok(S("NZ".into()))}
+		}
+		else {
+			if let Ok(f) = r_f(ra) && let Ok(r) = f_r(f) && *ra == r {Ok(S("NF".into()))}
+			else {Ok(S("N".into()))}
+		}
+	},
+
+	S(sa), true => {
+		let mut chars = sa.chars();
+		Ok(S(
+			if let (Some(_), None) = (chars.next(), chars.next()) {"SC".into()} else {"S".into()}
+		))
+	}
 );
 
 //   =

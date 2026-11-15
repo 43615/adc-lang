@@ -78,7 +78,7 @@ impl Display for TypeLabel {
 
 impl Display for Utf8Err {
 	fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-		match self {
+		match *self {
 			Self::OutOfBounds(pos, len) => {write!(f, "Position {pos} out of bounds, length is {len}")}
 			Self::Impossible(b0) => {write!(f, "Impossible byte in string: [\\{b0:02X}]")}
 			Self::ContAtStart(b0) => {write!(f, "Continuation byte at start of character: [\\{b0:02X}]")}
