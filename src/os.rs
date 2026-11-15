@@ -299,16 +299,14 @@ oscmd!(load, st {
 		Ok(mut fd) => {
 			match fd.read_to_end(&mut v) {
 				Ok(_) => {
-					match State::try_from(v.as_slice()) {
-						Ok(nst) => {
-							st.replace_vals(nst);
-							Ok(vec![])
-						},
-						Err(()) => {
-							let name = name.to_owned();
-							st.mstk.push(va);
-							Err(format!("State file '{name}' is invalid"))
-						}
+					if let Ok(s) = str::from_utf8(&v) && let Ok(nst) = s.parse() {
+						st.replace_vals(nst);
+						Ok(vec![])
+					}
+					else {
+						let name = name.to_owned();
+						st.mstk.push(va);
+						Err(format!("State file '{name}' is invalid"))
 					}
 				},
 				Err(e) => {

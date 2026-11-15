@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 use std::sync::{Arc, Barrier, Mutex, Once, RwLock};
 use std::sync::mpsc::{Sender, Receiver, TryRecvError};
 use std::thread::JoinHandle;
@@ -652,7 +653,7 @@ impl From<ParamStk> for Vec<Params> {
 ///
 /// The `interpreter…` methods are just an alternative syntax for the functions in the [crate root](crate#functions).
 ///
-/// The [`Display`] implementation produces a custom format that can be executed as an ADC script in order to restore it. This can be done manually or using the [`TryFrom`] impl below.
+/// The [`Display`] implementation produces a custom format that can be executed as an ADC script in order to restore it. This can be done manually or using [`FromStr`].
 #[derive(Default, Debug, Clone)]
 pub struct State {
 	/// Main stack, [`Arc`] to allow shallow copies
@@ -702,11 +703,11 @@ impl Display for State {
 	}
 }
 /// Attempts to deserialize from a previous [`Display`] output, with some basic format checks. Do not use with untrusted input, as creating a malicious script is trivial.
-impl TryFrom<&[u8]> for State {
-	type Error = ();
+impl FromStr for State {
+	type Err = ();
 
-	fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-		if !value.starts_with(&Self::STATE_FILE_HEADER) {return Err(());}
+	fn from_str(value: &str) -> Result<Self, Self::Err> {
+		if !value.as_bytes().starts_with(&Self::STATE_FILE_HEADER) {return Err(());}
 		let start = Utf8Iter::from(value);
 		let mut st = Self::default();
 		let res = st.interpreter_simple(start, None);

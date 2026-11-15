@@ -340,12 +340,10 @@ fn main() -> ExitCode {
 				if let Err(c) = fd.write_all(st.to_string().as_bytes()).map_err(map) {return c;}
 			}
 			Load(mut fd) => {
-				let mut st_script = Vec::new();
-				if let Err(c) = fd.read_to_end(&mut st_script).map_err(|e| {runtime_error(format!("Can't read from state file: {e}"))}) {return c;}
-				match State::try_from(st_script.as_slice()) {
-					Ok(nst) => {st.replace_vals(nst);},
-					Err(()) => {return runtime_error("Invalid state file".into());}
-				}
+				let mut v = Vec::new();
+				if let Err(c) = fd.read_to_end(&mut v).map_err(|e| {runtime_error(format!("Can't read from state file: {e}"))}) {return c;}
+				if let Ok(s) = str::from_utf8(&v) && let Ok(nst) = s.parse() {st.replace_vals(nst);}
+				else {return runtime_error("Invalid state file".into());}
 			}
 		}
 	}
