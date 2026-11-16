@@ -109,6 +109,12 @@ impl PartialEq for Value {
 impl Eq for Value {}
 
 impl Value {
+	pub(crate) fn bb(bit: bool) -> Self {
+		let mut v = BitVec::new();
+		v.push(bit);
+		B(v)
+	}
+
 	/// Prints scalar values, passing `A` is undefined behavior. `sb` prints brackets around strings.
 	unsafe fn display_scalar(&self, k: usize, o: &Natural, nm: NumOutMode, sb: bool) -> String {
 		match self {

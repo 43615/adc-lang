@@ -6,7 +6,6 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio, Child};
 use std::sync::Mutex;
-use bitvec::prelude::*;
 use crate::err::TypeLabel;
 use crate::state::{Value::{self, *}, State};
 
@@ -598,16 +597,16 @@ oscmd!(exited, st {
 		st.mstk.push(va);
 		return Err(format!("{sa} is not a possible process ID"));
 	};
-	let Some(mut child) = (unsafe{#[expect(static_mut_refs)] PIDS.remove(&pid)}) else {
+	let Some(child) = (unsafe{#[expect(static_mut_refs)] PIDS.get_mut(&pid)}) else {
 		st.mstk.push(va);
 		return Err(format!("Process {pid} is nonexistent or not a child"));
 	};
 	match child.try_wait() {
 		Ok(Some(_)) => {
-			Ok(vec![B(bitvec![u8, Msb0; 1])])
+			Ok(vec![Value::bb(true)])
 		},
 		Ok(None) => {
-			Ok(vec![B(bitvec![u8, Msb0; 0])])
+			Ok(vec![Value::bb(false)])
 		},
 		Err(e) => {
 			st.mstk.push(va);

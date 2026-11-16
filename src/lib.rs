@@ -887,14 +887,17 @@ pub unsafe fn interpreter(
 								let sec = st.mstk.pop();
 								match Utf8Iter::try_macros(&top, sec.as_deref()) {
 									Ok((stk, ret)) => {
+										if ret {debug!("x: Monadic form used");}
 										if let Some(sec) = sec && ret {	//sec was not used, return
 											st.mstk.push(sec);
 										}
 
 										if *count == Natural::ONE && mac.is_finished_or_noop() {	//tail call optimization: discard current macro if this is the last command
+											debug!("x: Tail call eliminated");
 											call.pop();
 										}
 
+										debug!("x: Running {} new macro(s)", stk.len());
 										call.extend(stk.into_iter().rev());
 
 										if !dest.is_empty() {	//flush array buffer if not completed

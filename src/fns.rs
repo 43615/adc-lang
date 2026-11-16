@@ -662,7 +662,7 @@ dya!(eq
 			Ok(B(bz))
 		}
 		else {
-			Ok(B(bitvec![u8, Msb0; 0]))
+			Ok(Value::bb(false))
 		}
 	},
 
@@ -679,7 +679,7 @@ dya!(eq
 	},
 
 	_, _, true => {	//infallible: false if types differ
-		Ok(B(bitvec![u8, Msb0; 0]))
+		Ok(Value::bb(false))
 	}
 );
 
@@ -707,7 +707,7 @@ dya!(lt
 	},
 
 	_, _, true => {	//infallible: false if types differ
-		Ok(B(bitvec![u8, Msb0; 0]))
+		Ok(Value::bb(false))
 	}
 );
 
@@ -735,7 +735,7 @@ dya!(gt
 	},
 
 	_, _, true => {	//infallible: false if types differ
-		Ok(B(bitvec![u8, Msb0; 0]))
+		Ok(Value::bb(false))
 	}
 );
 
