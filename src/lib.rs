@@ -486,7 +486,7 @@ pub unsafe fn interpreter(
 	let mut rptr: Option<Rational> = None;	//global scope to allow setting by a macro
 	let mut rpersist = false;	//don't reset on usage
 
-	let mut call: Vec<(Utf8Iter, Natural)> = vec![(start, Natural::ONE)];
+	let mut call: Vec<(Utf8Iter, Natural)> = if !start.is_finished_or_noop() {vec![(start, Natural::ONE)]} else {vec![]};
 
 	'mac: while let Some((mac, count)) = call.last_mut() {	//while call stack has contents, macro scope:
 		let mut alt = false;
@@ -891,7 +891,7 @@ pub unsafe fn interpreter(
 											st.mstk.push(sec);
 										}
 
-										if *count == Natural::ONE && mac.is_finished_trimmed() {	//tail call optimization: discard current macro if this is the last command
+										if *count == Natural::ONE && mac.is_finished_or_noop() {	//tail call optimization: discard current macro if this is the last command
 											call.pop();
 										}
 
@@ -1374,7 +1374,7 @@ pub unsafe fn interpreter(
 							}
 							else if let Some(va) = st.mstk.pop() {
 								if let S(sa) = &*va {
-									let name = format!("{th_name}{}: ", reg_index_pretty(&ri));
+									let name = format!("{th_name}{}:", reg_index_pretty(&ri));
 									let th_st = if alt {st.clone()} else {State::default()};
 									match ThreadHandle::spawn(&name, th_st, sa.to_owned(), Arc::clone(&io), ll, restrict) {
 										Ok(th) => {

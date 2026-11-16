@@ -353,7 +353,7 @@ Registers are auxiliary stacks, identified by rational indices. Commands that op
 
 Strings containing ADC commands are called macros, to differentiate them from data strings. They can be executed with the `x` command, which has several overloaded modes:
 - `SMa x` simply executes macro *a*.
-  - Execution of nested macros is performed pseudorecursively using a virtual stack in heap memory. Nesting depth is practically unlimited, tail calls are optimized away (including trailing no-ops).
+  - Execution of nested macros is performed pseudorecursively using a virtual stack in heap memory, nesting depth is practically unlimited. Tail calls, including trailing no-ops, are detected and will remove the current macro frame.
 - `SMa NNb x` executes *a* *b* times.
 - `SMa Bb x` executes *a* once for every `T` bit in *b*.
 - If the arguments are arrays, their contents are executed analogously, first element first. The arrays are effectively flattened and appended to the call stack in reverse order. *a* must only contain macros, *b* (if used) can't contain any strings. For the dyadic form, the array lengths and nesting topologies must match exactly (as [usual](#array-polymorphism)).
@@ -369,7 +369,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
 - `_thlist → (Nz)` returns the indices of all registers with outstanding child threads.
 - Joining and killing is propagated to grandchild threads, zombie threads are impossible under normal circumstances.
-- Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45: @6: [string if UTF-8]: `). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
+- Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45:@6:[string if UTF-8]:`). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
 - The [IO streams](#input-and-output) and the ability to execute [OS commands](#os-commands) are shared between all threads using mutexes. Competing threads are blocked until the currently occupying thread is finished. Busy and blocked threads are unable to receive their kill signal until they are unblocked and move on to the next command.
   - Note that waiting for input from `?` (or **CLI:** interactive mode) blocks concurrent output from other threads. In that case, it is recommended to break up busy loops with short delays (`w`, below).
 

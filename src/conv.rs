@@ -294,7 +294,7 @@ impl TryFrom<Utf8Iter<'_>> for String {
 
 	fn try_from(mut value: Utf8Iter) -> Result<String, String> {
 		let mut res = String::new();
-		while !value.is_finished() {
+		while value.pos < value.bytes.len() {
 			res.push(value.try_next_char().map_err(|e| format!("At byte {}: {e}", value.pos))?);
 		}
 		Ok(res)
@@ -392,7 +392,7 @@ impl Utf8Iter<'_> {
 	/// - Otherwise, `sec` must be a string, and the number/boolean in `top` decides how often to run `sec`.
 	/// - For arrays, the nesting layout and lengths must match exactly and the contained scalars must all be either strings or non-strings as above.
 	///
-	/// `Ok` contains the macros and repetition counts (omitting zero-count macros), and a flag indicating whether `sec` should be returned.
+	/// `Ok` contains the macros and repetition counts (omitting zero-count and no-op macros), and a flag indicating whether `sec` should be returned.
 	pub fn try_macros(top: &Value, sec: Option<&Value>) -> Result<(Vec<(Self, Natural)>, bool), String> {
 		use crate::err::TypeLabel;
 		use crate::conv::Promote2;
@@ -412,15 +412,17 @@ impl Utf8Iter<'_> {
 								},
 								(S(sa), B(bb)) => {
 									let nb = Natural::from(bb.count_ones());
-									if nb != Natural::ZERO {
-										res.push((sa.to_owned().into(), nb));
+									let ui = Self::from(sa.to_owned());
+									if nb != Natural::ZERO && !ui.is_finished_or_noop() {
+										res.push((ui, nb));
 									}
 								},
 								(S(sa), N(rb)) => {
 									let Ok(nb) = Natural::try_from(rb)
 										else {return Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)));};
-									if nb != Natural::ZERO {
-										res.push((sa.to_owned().into(), nb));
+									let ui = Self::from(sa.to_owned());
+									if nb != Natural::ZERO && !ui.is_finished_or_noop() {
+										res.push((ui, nb));
 									}
 								},
 								(_, S(_)) => {	//legitimate strings are already covered by monadic form attempt
@@ -441,16 +443,18 @@ impl Utf8Iter<'_> {
 				//scalars:
 				(S(sa), B(bb)) => {
 					let nb = Natural::from(bb.count_ones());
-					if nb != Natural::ZERO {
-						Ok((vec![(sa.to_owned().into(), nb)], false))
+					let ui = Self::from(sa.to_owned());
+					if nb != Natural::ZERO && !ui.is_finished_or_noop() {
+						Ok((vec![(ui, nb)], false))
 					}
 					else {Ok((vec![], false))}
 				},
 				(S(sa), N(rb)) => {
 					let Ok(nb) = Natural::try_from(rb)
 						else {return Err(format!("Can't possibly repeat a macro {} times", crate::num::nauto(rb, DEFAULT_PARAMS.0, &DEFAULT_PARAMS.2)));};
-					if nb != Natural::ZERO {
-						Ok((vec![(sa.to_owned().into(), nb)], false))
+					let ui = Self::from(sa.to_owned());
+					if nb != Natural::ZERO && !ui.is_finished_or_noop() {
+						Ok((vec![(ui, nb)], false))
 					}
 					else {Ok((vec![], false))}
 				},
@@ -474,7 +478,10 @@ impl Utf8Iter<'_> {
 									stk.push(na.iter());	//"recursive call"
 								},
 								S(s) => {	//string encountered
-									res.push((s.to_owned().into(), Natural::ONE));
+									let ui = Self::from(s.to_owned());
+									if !ui.is_finished_or_noop() {
+										res.push((ui, Natural::ONE));
+									}
 								},
 								_ => {
 									return Err(format!("Expected only macro strings, found {} in array", TypeLabel::from(val)));
@@ -490,7 +497,11 @@ impl Utf8Iter<'_> {
 				},
 				//scalar:
 				S(s) => {
-					Ok((vec![(s.to_owned().into(), Natural::ONE)], true))
+					let ui = Self::from(s.to_owned());
+					if !ui.is_finished_or_noop() {
+						Ok((vec![(ui, Natural::ONE)], true))
+					}
+					else {Ok((vec![], true))}
 				},
 				_ => {
 					Err(format!("Expected a macro string, {} given", TypeLabel::from(top)))
@@ -499,9 +510,7 @@ impl Utf8Iter<'_> {
 		}
 	}
 
-	pub(crate) fn is_finished(&self) -> bool { self.pos >= self.bytes.len() }
-
-	pub(crate) fn is_finished_trimmed(&self) -> bool {
+	pub(crate) fn is_finished_or_noop(&self) -> bool {
 		let mut pos = self.pos;
 		pos >= self.bytes.len()
 		||
