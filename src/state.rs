@@ -566,6 +566,7 @@ impl ParamStk {
 			target_pointer_width = "16" => {"65535"}
 			target_pointer_width = "32" => {"4294967295"}
 			target_pointer_width = "64" => {"18446744073709551615"}
+			_ => compile_error!("Exotic pointer width, please report an issue!")
 		}))}
 	}
 

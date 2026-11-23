@@ -332,7 +332,7 @@ The valid forms of an array index (`NI`) are:
 
 ## Array commands
 
-TODO
+- `Xa Yb a= → BBz` tests the outer equality of two values, not element-wise like the `=` command.
 
 
 # Registers
@@ -369,7 +369,7 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `J⒭ → BBz` returns `T` if the thread is finished and can be joined immediately.
 - `_thlist → (Nz)` returns the indices of all registers with outstanding child threads.
 - Joining and killing is propagated to grandchild threads, zombie threads are impossible under normal circumstances.
-- Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45:@6:[string if UTF-8]:`). This is prefixed to error messages and may be retrieved for manual use with `_th → Sz`.
+- Threads are assigned names when spawned. The name is an empty string for the main thread, and the handle register's index is appended to it for (grand)child threads, using register pointer syntax with the best-fitting format (like `123.45:@6:[string if UTF-8]:`). The thread name is prefixed to error messages and may be retrieved for manual use with `_th → Sz`. There may me platform-dependent quirks, don't rely on it for logic.
 - The [IO streams](#input-and-output) and the ability to execute [OS commands](#os-commands) are shared between all threads using mutexes. Competing threads are blocked until the currently occupying thread is finished. Busy and blocked threads are unable to receive their kill signal until they are unblocked and move on to the next command.
   - Note that waiting for input from `?` (or **CLI:** interactive mode) blocks concurrent output from other threads. In that case, it is recommended to break up busy loops with short delays (`w`, below).
 
@@ -385,7 +385,8 @@ Macro execution may also be delegated to a separate thread. Child threads are at
   - **CLI:** Soft quit ends the current `-i`/`-e`/`-f` invocation, the exit code is updated by each `q` and returned at the very end. Hard quit exits the process immediately using its exit code, discarding any following instruction flags.
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
 - `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving actual data unchanged. Use after operations that need large temporary values.
-- `_dedup` finds any equal values in the whole `State` and replaces them with shallow copies of just one of them. Requires O(n²) time, use sparingly.
+- `_ptreq → BBz` inspects the top two values on the stack and returns `T` if they are shallow copies (of each other or another value).
+- `_dedup` searches the whole `State` for pairs of equal values that aren't shallow copies and replaces one with a shallow copy of the other. Requires O(n²) time, use sparingly.
 - `_clall` clears the entire current `State`. Thread handles are unaffected.
 
 
@@ -404,10 +405,10 @@ Most strings involved here are not guaranteed to be valid UTF-8, particularly on
 - `_pid → NNz` returns the process ID of the interpreter.
 - `Sa Sb _setvar` sets the environment variable *a* to the value *b*, clearing it if empty.
 - `Sa _getvar → Sz` reads the environment variable *a*, empty string if unset.
-- `Sa _setdir` changes the interpreter's working directory to path *a*.
-- `_getdir → Sz` returns the current working directory.
-- `_homedir → Sz` returns the executing user's home directory, empty string if N/A or unknown.
-- `_tempdir → Sz` returns a path to a temporary directory.
+- `Sa _cd` changes the interpreter's working directory to path *a*.
+- `_pwd → Sz` returns the current working directory.
+- `_home → Sz` returns the executing user's home directory, empty string if N/A or unknown.
+- `_temp → Sz` returns a path to a temporary directory.
 
 
 ## File operations

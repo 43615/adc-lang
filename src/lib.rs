@@ -400,6 +400,7 @@ pub unsafe fn interpreter(
 	mut restrict: bool
 ) -> std::io::Result<ExecResult>
 {
+	#![allow(clippy::needless_late_init)]
 	use ExecResult::*;
 
 	debug_assert!(
@@ -408,7 +409,7 @@ pub unsafe fn interpreter(
 			let mut counts = [0u8; 3];
 			for cmd in CMDS {
 				counts[match cmd {
-					Exec => 0, ExecR => 1, Lit => 2, _ => {continue;}
+					Exec => 0, ExecR => 1, Lit => 2, _ => continue
 				}] += 1;
 			}
 			counts == [20, 8, 16]
@@ -416,7 +417,7 @@ pub unsafe fn interpreter(
 	);
 
 	let th_name = if kill.is_some() {	//if running in a child thread
-		std::thread::current().name().unwrap().to_owned()
+		std::thread::current().name().unwrap_or_default().to_owned()
 	}
 	else {
 		String::new()
@@ -960,8 +961,19 @@ pub unsafe fn interpreter(
 							match mac.next() {
 								Some(b) if !matches!(byte_cmd(b), Space) => {
 									match b {
-										b'a' => {
-											todo!()
+										b'=' => {
+											if let Some(vb) = st.mstk.pop() {
+												if let Some(va) = st.mstk.pop() {
+													push!(Value::bb(Arc::ptr_eq(&va, &vb) || *va == *vb));	//try ptr_eq first, it can't be true for different values
+												}
+												else {
+													st.mstk.push(vb);
+													synerr!('=', "Expected 2 arguments, 1 given");
+												}
+											}
+											else {
+												synerr!('=', "Expected 2 arguments, 0 given");
+											}
 										},
 										_ => {
 											synerr!('a', "Invalid array command 'a{}'", b as char);
@@ -994,24 +1006,24 @@ pub unsafe fn interpreter(
 															}
 															else {
 																st.mstk.push(va);
-																valerr!('f', "Can't reverse {} values, stack depth is {}", u, st.mstk.len() - 1);
+																valerr!('R', "Can't reverse {} values, stack depth is {}", u, st.mstk.len() - 1);
 															}
 														}
 														Err(_) => {
 															let vs = va.to_string();
 															st.mstk.push(va);
-															valerr!('f', "Can't possibly reverse {} values", vs);
+															valerr!('R', "Can't possibly reverse {} values", vs);
 														}
 													}
 												}
 												else {
 													let ta = TypeLabel::from(&*va);
 													st.mstk.push(va);
-													synerr!('f', "Expected a number, {} given", ta);
+													synerr!('R', "Expected a number, {} given", ta);
 												}
 											}
 											else {
-												synerr!('f', "Expected 1 argument, 0 given");
+												synerr!('R', "Expected 1 argument, 0 given");
 											}
 										},
 										b'f' => {	//swap with reg
@@ -1184,6 +1196,12 @@ pub unsafe fn interpreter(
 							debug!("Word command {}", string_or_bytes(&word));
 
 							match &word[..] {	//word commands:
+								b"ptreq" => {
+									if let Some([va, vb]) = st.mstk.get(st.mstk.len()-2..) {
+										push!(Value::bb(Arc::ptr_eq(va, vb)));
+									}
+									else {synerr!('_', "Expected at least 2 values on the stack");}
+								},
 								b"restrict" => {
 									#[cfg_attr(feature = "no_os", expect(unused_assignments))] { restrict = true; }
 								},

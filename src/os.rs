@@ -41,10 +41,10 @@ pub static OS_CMDS: Mutex<phf::Map<&[u8], OsCmd>> = Mutex::new(phf::phf_map! {
 	//env operations
 	b"setvar" => setvar,
 	b"getvar" => getvar,
-	b"setdir" => setdir,
-	b"getdir" => getdir,
-	b"homedir" => homedir,
-	b"tempdir" => tempdir,
+	b"cd" => cd,
+	b"pwd" => pwd,
+	b"home" => home,
+	b"temp" => temp,
 
 	//child processes
 	b"run" => run,
@@ -407,7 +407,7 @@ oscmd!(getvar, st {
 	Ok(vec![S(std::env::var_os(var).unwrap_or_default().to_string_lossy().into())])
 });
 
-oscmd!(setdir, st {
+oscmd!(cd, st {
 	let Some(va) = st.mstk.pop() else {return Err("Expected 1 argument, 0 given!".into());};
 	let S(path) = &*va else {
 		let ta = TypeLabel::from(&*va);
@@ -424,18 +424,18 @@ oscmd!(setdir, st {
 	}
 });
 
-oscmd!(getdir, _st {
+oscmd!(pwd, _st {
 	match std::env::current_dir() {
 		Ok(path) => {Ok(vec![S(path.to_string_lossy().into())])},
 		Err(e) => {Err(format!("Can't get current working directory: {e}"))}
 	}
 });
 
-oscmd!(homedir, _st {
+oscmd!(home, _st {
 	Ok(vec![S(std::env::home_dir().unwrap_or_default().to_string_lossy().into())])
 });
 
-oscmd!(tempdir, _st {
+oscmd!(temp, _st {
 	Ok(vec![S(std::env::temp_dir().to_string_lossy().into())])
 });
 
