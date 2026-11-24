@@ -58,7 +58,7 @@ pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<N
 				}
 				if rpart.is_empty() {	//if fpart is the end
 					round(fpart.iter_mut().rev().chain(ipart.iter_mut().rev()), next.digit, o);
-					if ipart[0] == Natural::ZERO {    //if first digit rolled over (r == o^n - 1):
+					if let Some(d) = ipart.first() && *d == Natural::ZERO {    //if first digit rolled over (r == o^n - 1):
 						ipart.insert(0, Natural::ONE);    //add leading 1
 					}
 					while let Some(&Natural::ZERO) = fpart.last() {    //remove trailing zeros
@@ -72,7 +72,7 @@ pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<N
 			ipart.truncate(k + 1);
 			let next = unsafe { ipart.pop().unwrap_unchecked() };
 			round(ipart.iter_mut().rev(), next, o);
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1):
+			if let Some(d) = ipart.first() && *d == Natural::ZERO {	//if first digit rolled over (r == o^n - 1):
 				ipart.insert(0, Natural::ONE);	//add leading 1
 				len += 1;	//adjust target length
 			}
@@ -117,7 +117,7 @@ pub fn factoradic_digits(r: &Rational, k: usize) -> (bool, Vec<Natural>, Vec<Nat
 							break;
 						}
 					}
-					if ipart[0] == Natural::ZERO {	//if first digit rolled over
+					if let Some(d) = ipart.first() && *d == Natural::ZERO {	//if first digit rolled over
 						ipart.insert(0, Natural::ONE);	//add leading 1
 					}
 				}
@@ -148,7 +148,7 @@ pub fn factoradic_digits(r: &Rational, k: usize) -> (bool, Vec<Natural>, Vec<Nat
 						break;
 					}
 				}
-				if ipart[0] == Natural::ZERO {	//if first digit rolled over
+				if let Some(d) = ipart.first() && *d == Natural::ZERO {	//if first digit rolled over
 					ipart.insert(0, Natural::ONE);	//add leading 1
 					len += 1;	//adjust target length
 				}
