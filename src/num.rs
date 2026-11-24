@@ -4,200 +4,159 @@ use std::cmp::Ordering::*;
 use malachite::{Natural, Rational};
 use malachite::base::num::arithmetic::traits::*;
 use malachite::base::num::basic::traits::{Zero, One, Two};
-use malachite::base::num::conversion::traits::{ExactFrom, Digits, WrappingFrom};
+use malachite::base::num::conversion::traits::{Digits, WrappingFrom};
 use malachite::rational::rational::arithmetic::traits::Approximate;
+
+///ascending significance, ties to even
+fn round<'a>(digits: impl Iterator<Item = &'a mut Natural>, next: Natural, o: &Natural) {
+	let ord = (next * Natural::TWO).cmp(o);
+	if ord != Less {	//round remaining digits if next >= ceil(o/2)
+		let mut to_even = ord == Equal;	//round last digit to even if next == o/2
+		for d in digits {	//carry addition all the way up
+			if !to_even || d.odd() {	//only increment last digit if it's odd
+				*d += Natural::ONE;	//reused for carrying up after a continue
+			}
+			to_even = false;
+			if d == o {	//roll over
+				*d = Natural::ZERO;
+				continue;
+			}
+			else {	//rounding finished
+				break;
+			}
+		}
+	}
+}
 
 ///negative, integer, fractional, recurring
 pub fn digits(r: &Rational, k: usize, o: &Natural) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
 	if *o == Natural::ONE {return factoradic_digits(r, k);}	//automatic fallback
 	let sign = r.sign() == Less;
-	let (mut ipart, temp) = r.to_digits(o);
-	ipart.reverse();	//malachite puts them in reverse order
-	let (mut fpart, mut rpart) = temp.into_vecs();
-	if k == 0 || k >= ipart.len()+fpart.len()+rpart.len() {	//unlimited precision or all digits fit
-		//do nothing
+	if k == 0 {	//unlimited precision, just compute all digits
+		let (mut ipart, temp) = r.to_digits(o);
+		ipart.reverse();	//malachite puts them in reverse order
+		let (fpart, rpart) = temp.into_vecs();
+		(sign, ipart, fpart, rpart)
 	}
-	else if k >= ipart.len()+fpart.len() {	//not all recurring digits fit
-		//move the digits that fit into fractionals
-		rpart.truncate(1 + k - (ipart.len()+fpart.len()));
-		let next = rpart.pop().unwrap();	//first discarded digit
-		fpart.append(&mut rpart);
-		let ord = (next * Natural::TWO).cmp(o);
-		if ord != Less {	//round remaining digits if next >= ceil(o/2)
-			let mut to_even = ord == Equal;	//round last digit to even if next == o/2
-			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
-				if !to_even || d.odd() {	//only increment last digit if it's odd
-					*d += Natural::ONE;	//reused for carrying up after a continue
+	else {
+		let (mut ipart, mut digits) = r.foer_digits(o);
+		ipart.reverse();	//malachite puts them in reverse order
+		let (mut fpart, mut rpart) = (Vec::new(), Vec::new());
+		if let Some(k) = k.checked_sub(ipart.len()) {	//ipart fits
+			let mut period = false;
+			let mut whole_rpart = false;
+			for fd in digits.by_ref().take(k) {
+				if fd.period_start {
+					if period {whole_rpart = true; break;}
+					else {period = true;}
 				}
-				to_even = false;
-				if d == o {	//roll over
-					*d = Natural::ZERO;
-					continue;
-				}
-				else {
-					break;
-				}
+				if fd.repeating {rpart.push(fd.digit);} else {fpart.push(fd.digit);}
 			}
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1)
-				ipart.insert(0, Natural::ONE);	//add leading 1
-			}
-		}
-		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
-			fpart.pop();
-		}
-	}
-	else if k >= ipart.len() {	//not all fractional digits fit
-		rpart.clear();
-		fpart.truncate(1 + k - ipart.len());
-		let next = fpart.pop().unwrap();	//first discarded digit
-		let ord = (next * Natural::TWO).cmp(o);
-		if ord != Less {	//round remaining digits if next >= ceil(o/2)
-			let mut to_even = ord == Equal;	//round last digit to even if next == o/2
-			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
-				if !to_even || d.odd() {	//only increment last digit if it's odd
-					*d += Natural::ONE;	//reused for carrying up after a continue
+			if let Some(next) = digits.next() {	//whole fpart + rpart didn't fit in k
+				if !whole_rpart && !next.period_start {    //whole rpart didn't fit in k
+					fpart.append(&mut rpart);    //move incomplete rpart into fpart
 				}
-				to_even = false;
-				if d == o {	//roll over
-					*d = Natural::ZERO;
-					continue;
+				if rpart.is_empty() {	//if fpart is the end
+					round(fpart.iter_mut().rev().chain(ipart.iter_mut().rev()), next.digit, o);
+					if ipart[0] == Natural::ZERO {    //if first digit rolled over (r == o^n - 1):
+						ipart.insert(0, Natural::ONE);    //add leading 1
+					}
+					while let Some(&Natural::ZERO) = fpart.last() {    //remove trailing zeros
+						fpart.pop();
+					}
 				}
-				else {
-					break;
-				}
-			}
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1)
-				ipart.insert(0, Natural::ONE);	//add leading 1
 			}
 		}
-		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
-			fpart.pop();
-		}
-	}
-	else {	//not all integer digits fit
-		rpart.clear();
-		fpart.clear();
-		let mut len = ipart.len();
-		ipart.truncate(1 + k);
-		let next = ipart.pop().unwrap();	//first discarded digit
-		let ord = (next * Natural::TWO).cmp(o);
-		if ord != Less {	//round remaining digits if next >= ceil(o/2)
-			let mut to_even = ord == Equal;	//round last digit to even if next == o/2
-			for d in ipart.iter_mut().rev() {	//carry addition all the way up
-				if !to_even || d.odd() {	//only increment last digit if it's odd
-					*d += Natural::ONE;	//reused for carrying up after a continue
-				}
-				to_even = false;
-				if d == o {	//roll over
-					*d = Natural::ZERO;
-					continue;
-				}
-				else {
-					break;
-				}
-			}
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1)
+		else {	//ipart doesn't fit
+			let mut len = ipart.len();
+			ipart.truncate(k + 1);
+			let next = unsafe { ipart.pop().unwrap_unchecked() };
+			round(ipart.iter_mut().rev(), next, o);
+			if ipart[0] == Natural::ZERO {	//if first digit rolled over (r == o^n - 1):
 				ipart.insert(0, Natural::ONE);	//add leading 1
 				len += 1;	//adjust target length
 			}
+			ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
 		}
-		ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
+		(sign, ipart, fpart, rpart)
 	}
-
-	(sign, ipart, fpart, rpart)
 }
 
+///rpart is always empty, just preserves the signature
 pub fn factoradic_digits(r: &Rational, k: usize) -> (bool, Vec<Natural>, Vec<Natural>, Vec<Natural>) {
 	let sign = r.sign() == Less;
-	let mut i = Natural::exact_from(r.abs().floor());
-	let mut f = r.abs() - Rational::from(&i);
-	let mut ipart = Vec::new();
-	let mut fpart = Vec::new();
-
-	for d in malachite::natural::exhaustive::exhaustive_natural_range_to_infinity(Natural::TWO) {	//last factor of current place value, moving outwards:
-		if i!=Natural::ZERO {
-			let (q, r) = i.div_mod(d.clone());
-			i = q;
-			ipart.push(r);
-		}
-		if f!=Rational::ZERO {
-			f *= Rational::from(d);
-			let r = (&f).floor();
-			f -= Rational::from(&r);
-			fpart.push(Natural::exact_from(r));
-		}
-		if i==Natural::ZERO && f==Rational::ZERO {break;}
+	let (temp, mut digits) = r.factoradic_digits();
+	let mut ipart = temp.into_iter().rev().map(Natural::from).collect();
+	if k == 0 {    //unlimited precision, just compute all digits
+		let fpart = digits.map(Natural::from).collect();
+		(sign, ipart, fpart, Vec::new())
 	}
-	ipart.reverse();
-
-	if k == 0 || k >= ipart.len()+fpart.len() {	//unlimited precision or all digits fit
-		//do nothing
-	}
-	else if k >= ipart.len() {	//not all fractional digits fit
-		let len = k - ipart.len();
-		fpart.truncate(len + 1);
-		let mut place = len + 2;	//"base" (max+1) of current place
-		let mut inc = false;
-		let next = fpart.pop().unwrap();	//first discarded digit
-		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
-		if ord != Less {	//round remaining digits if next >= ceil(place/2)
-			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
-			for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
-				if !to_even || d.odd() {	//only increment last digit if it's odd
-					*d += Natural::ONE;	//reused for carrying up after a continue
+	else {
+		let mut fpart = Vec::new();
+		if let Some(k) = k.checked_sub(ipart.len()) {	//ipart fits
+			fpart.extend(digits.by_ref().take(k).map(Natural::from));
+			if let Some(next) = digits.next().map(Natural::from) {	//whole fpart didn't fit in k
+				let mut place = k + 2;	//"base" (max+1) of current place
+				let mut inc = false;
+				let ord = unsafe { (next * Natural::TWO).partial_cmp(&place).unwrap_unchecked() };
+				if ord != Less {	//round remaining digits if next >= ceil(place/2)
+					let mut to_even = ord == Equal;	//round last digit to even if next == place/2
+					for d in fpart.iter_mut().rev().chain(ipart.iter_mut().rev()) {	//carry addition all the way up
+						if !to_even || d.odd() {	//only increment last digit if it's odd
+							*d += Natural::ONE;	//reused for carrying up after a continue
+						}
+						to_even = false;
+						if *d == place {	//roll over
+							*d = Natural::ZERO;
+							if inc {place += 1;}	//adjust for next digit
+							else if place == 2 {inc = true;}	//passed into ipart, turn around
+							else {place -= 1;}
+							continue;
+						}
+						else {
+							break;
+						}
+					}
+					if ipart[0] == Natural::ZERO {	//if first digit rolled over
+						ipart.insert(0, Natural::ONE);	//add leading 1
+					}
 				}
-				to_even = false;
-				if *d == place {	//roll over
-					*d = Natural::ZERO;
-					if inc {place += 1;}	//adjust for next digit
-					else if place == 2 {inc = true;}
-					else {place -= 1;}
-					continue;
-				}
-				else {
-					break;
+				while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
+					fpart.pop();
 				}
 			}
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over
-				ipart.insert(0, Natural::ONE);	//add leading 1
+		}
+		else {	//ipart doesn't fit
+			let mut len = ipart.len();
+			ipart.truncate(k + 1);
+			let mut place = len - k + 2;	//"base" (max+1) of current place
+			let next = unsafe { ipart.pop().unwrap_unchecked() };	//first discarded digit
+			let ord = unsafe { (next * Natural::TWO).partial_cmp(&place).unwrap_unchecked() };
+			if ord != Less {	//round remaining digits if next >= ceil(place/2)
+				let mut to_even = ord == Equal;	//round last digit to even if next == place/2
+				for d in ipart.iter_mut().rev() {	//carry addition all the way up
+					if !to_even || d.odd() {	//only increment last digit if it's odd
+						*d += Natural::ONE;	//reused for carrying up after a continue
+					}
+					to_even = false;
+					if *d == place {	//roll over
+						*d = Natural::ZERO;
+						place += 1;	//adjust for next digit
+						continue;
+					}
+					else {
+						break;
+					}
+				}
+				if ipart[0] == Natural::ZERO {	//if first digit rolled over
+					ipart.insert(0, Natural::ONE);	//add leading 1
+					len += 1;	//adjust target length
+				}
 			}
+			ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
 		}
-		while let Some(&Natural::ZERO) = fpart.last() {	//remove trailing zeros
-			fpart.pop();
-		}
+		(sign, ipart, fpart, Vec::new())
 	}
-	else {	//not all integer digits fit
-		fpart.clear();
-		let mut len = ipart.len();
-		ipart.truncate(1 + k);
-		let mut place = 2 + len - k;	//"base" (max+1) of current place
-		let next = ipart.pop().unwrap();	//first discarded digit
-		let ord = (next * Natural::TWO).partial_cmp(&place).unwrap();
-		if ord != Less {	//round remaining digits if next >= ceil(place/2)
-			let mut to_even = ord == Equal;	//round last digit to even if next == place/2
-			for d in ipart.iter_mut().rev() {	//carry addition all the way up
-				if !to_even || d.odd() {	//only increment last digit if it's odd
-					*d += Natural::ONE;	//reused for carrying up after a continue
-				}
-				to_even = false;
-				if *d == place {	//roll over
-					*d = Natural::ZERO;
-					place += 1;	//adjust for next digit
-					continue;
-				}
-				else {
-					break;
-				}
-			}
-			if ipart[0] == Natural::ZERO {	//if first digit rolled over
-				ipart.insert(0, Natural::ONE);	//add leading 1
-				len += 1;	//adjust target length
-			}
-		}
-		ipart.resize(len, Natural::ZERO);	//fill with zeros to original length
-	}
-
-	(sign, ipart, fpart, Vec::new())
 }
 
 ///digit to character byte: 0-9a-z
@@ -228,7 +187,7 @@ pub fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural],
 		}
 
 		if !fpart.is_empty() {
-			*res.last_mut().unwrap() = b'.';	//fractional point
+			unsafe { *res.last_mut().unwrap_unchecked() = b'.'; }	//fractional point
 			for fd in fpart {
 				res.extend_from_slice(fd.to_string().as_bytes());	//fractional digits
 				res.push(b' ');
@@ -241,7 +200,7 @@ pub fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural],
 				res.push(b'`');
 			}
 			else {
-				*res.last_mut().unwrap() = b'`';	//recurring prefix
+				unsafe { *res.last_mut().unwrap_unchecked() = b'`'; }	//recurring prefix
 			}
 			for rd in rpart {
 				res.extend_from_slice(rd.to_string().as_bytes());	//recurring digits
@@ -249,7 +208,7 @@ pub fn nnorm(neg: bool, ipart: &[Natural], fpart: &[Natural], rpart: &[Natural],
 			}
 		}
 
-		*res.last_mut().unwrap() = b'\'';	//suffix for any-base
+		unsafe { *res.last_mut().unwrap_unchecked() = b'\''; }	//suffix for any-base
 	}
 	else {	//low base
 		if *o > Natural::const_from(10) {
@@ -376,7 +335,7 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 				res.extend_from_slice(d.to_string().as_bytes());	//add digit values
 				res.push(b' ');
 			}
-			*res.last_mut().unwrap() = b'\'';	//any-base/factoradic suffix
+			unsafe { *res.last_mut().unwrap_unchecked() = b'\''; }	//any-base/factoradic suffix
 		}
 		else {	//low base
 			for d in digits {
@@ -387,9 +346,10 @@ pub fn nfrac(r: &Rational, k: usize, o: &Natural) -> String {
 		res.push(b' ');
 	}
 
-	*res.last_mut().unwrap() = b'/';
-
-	unsafe { String::from_utf8_unchecked(res) }	//only ASCII
+	unsafe {
+		*res.last_mut().unwrap_unchecked() = b'/';
+		String::from_utf8_unchecked(res)	//only ASCII
+	}
 }
 
 ///shortest of nnorm, nsci, nfrac (in this order)

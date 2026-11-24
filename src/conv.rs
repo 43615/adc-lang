@@ -37,7 +37,7 @@ pub fn f_r(fa: f64) -> Result<Rational, FnErr> {
 	else if fa == f64::INFINITY {Err(Arith("Floating-point result is +∞".into()))}
 	else if fa == f64::NEG_INFINITY {Err(Arith("Floating-point result is -∞".into()))}
 	else {
-		Ok(Rational::try_from_float_simplest(fa).unwrap())
+		unsafe { Ok(Rational::try_from_float_simplest(fa).unwrap_unchecked()) }
 	}
 }
 

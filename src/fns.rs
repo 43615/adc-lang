@@ -353,7 +353,7 @@ dya!(pow
 	
 	S(sa), S(sb), false => {	//find substring by literal
 		if let Some(bidx) = sa.find(sb) {	//byte position
-			Ok(N(sa.char_indices().position(|(cidx, _)| cidx == bidx).unwrap().into()))	//char position
+			unsafe { Ok(N(sa.char_indices().position(|(cidx, _)| cidx == bidx).unwrap_unchecked().into())) }	//char position
 		}
 		else {
 			Ok(N(Rational::NEGATIVE_ONE))
@@ -364,7 +364,7 @@ dya!(pow
 		let re = RE_CACHE.get(sb).map_err(Custom)?;
 		if let Some(m) = re.find(sa) {	//find match
 			Ok(A(vec![
-				N(sa.char_indices().position(|(cidx, _)| cidx == m.start()).unwrap().into()),	//char position of start
+				unsafe { N(sa.char_indices().position(|(cidx, _)| cidx == m.start()).unwrap_unchecked().into()) },	//char position of start
 				N(m.as_str().chars().count().into())	//char length of match
 			]))
 		}
@@ -796,7 +796,7 @@ dya!(trig
 mon!(conv
 	B(ba), false => {	//boolean to natural
 		Ok(N(
-			Rational::from(Natural::from_power_of_2_digits_desc(8, bitvec_bytes(ba)).unwrap())
+			unsafe { Rational::from(Natural::from_power_of_2_digits_desc(8, bitvec_bytes(ba)).unwrap_unchecked()) }
 		))
 	},
 
@@ -826,7 +826,7 @@ mon!(conv
 
 	S(sa), true => {	//string to natural
 		Ok(N(
-			Rational::from(Natural::from_power_of_2_digits_desc(8, sa.bytes()).unwrap())
+			unsafe { Rational::from(Natural::from_power_of_2_digits_desc(8, sa.bytes()).unwrap_unchecked()) }
 		))
 	}
 );

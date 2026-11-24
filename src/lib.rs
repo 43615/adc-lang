@@ -29,7 +29,7 @@ use linefeed::{DefaultTerminal, Interface};
 use bitvec::prelude::*;
 use malachite::{Natural, Integer, Rational};
 use malachite::base::num::arithmetic::traits::{Factorial, NegAssign, Pow};
-use malachite::base::num::basic::traits::{NegativeOne, Zero, One, Two};
+use malachite::base::num::basic::traits::{NegativeOne, Zero, One};
 use malachite::base::num::conversion::traits::{PowerOf2DigitIterable, RoundingFrom, WrappingFrom};
 use err::TypeLabel;
 use state::Value::*;
@@ -693,8 +693,8 @@ pub unsafe fn interpreter(
 							if let Some(va) = st.mstk.pop() {
 								let v = match &*va {
 									N(_) => &*va,
-									B(_) => &fns::conv(&va, false).unwrap(),
-									S(_) => &fns::conv(&va, true).unwrap(),
+									B(_) => unsafe { &fns::conv(&va, false).unwrap_unchecked() },
+									S(_) => unsafe { &fns::conv(&va, true).unwrap_unchecked() },
 									A(_) => {
 										st.mstk.push(va);
 										synerr!(':', "Expected a scalar, array given");
@@ -1487,6 +1487,7 @@ pub unsafe fn interpreter(
 							let mut discard = false;
 							let mut ibase = st.params.get_i().clone();
 
+							//parse digits:
 							match (b == b'\'', ibase > Natural::const_from(36) || ibase == Natural::ONE) {
 								(false, high_base) => {	//plain
 									mac.back();
@@ -1675,35 +1676,24 @@ pub unsafe fn interpreter(
 											continue 'cmd;
 										}
 									}
-									if !is.is_empty() { for id in is.split(|b| *b == b' ') {
-										let id = str::from_utf8(id).unwrap();
-										ipart.push(Natural::from_str(id).unwrap());
-									}}
-									if !fs.is_empty() { for fd in fs.split(|b| *b == b' ') {
-										let fd = str::from_utf8(fd).unwrap();
-										fpart.push(Natural::from_str(fd).unwrap());
-									}}
-									if !rs.is_empty() { for rd in rs.split(|b| *b == b' ') {
-										let rd = str::from_utf8(rd).unwrap();
-										rpart.push(Natural::from_str(rd).unwrap());
-									}}
-									if ibase != Natural::ONE { for d in ipart.iter().chain(fpart.iter()).chain(rpart.iter()) {
-										if *d >= ibase {
-											synerr!('\'', "Digit {} is too high for base {}", d, ibase);
-											alt = false;
-											continue 'cmd;
-										}
-									}}
-									else { for (i, d) in ipart.iter().rev().enumerate().chain(fpart.iter().enumerate()) {
-										if *d >= i+2 {	//highest allowed values are '... 3 2 1.1 2 3 ...'
-											synerr!('\'', "Digit {} is too high for factoradic place {} away from the '.'", d, i);
-											alt = false;
-											continue 'cmd;
-										}
-									}}
+									unsafe {
+										if !is.is_empty() { for id in is.split(|b| *b == b' ') {
+												let id = str::from_utf8_unchecked(id);
+												ipart.push(Natural::from_str(id).unwrap_unchecked());
+										}}
+										if !fs.is_empty() { for fd in fs.split(|b| *b == b' ') {
+												let fd = str::from_utf8_unchecked(fd);
+												fpart.push(Natural::from_str(fd).unwrap_unchecked());
+										}}
+										if !rs.is_empty() { for rd in rs.split(|b| *b == b' ') {
+												let rd = str::from_utf8_unchecked(rd);
+												rpart.push(Natural::from_str(rd).unwrap_unchecked());
+										}}
+									}
 								}
 							}
 
+							//compute number:
 							let m_empty = ipart.is_empty() && fpart.is_empty() && rpart.is_empty();	//simpler const zero, also keep track of emptiness
 							let mut r;
 							match (m_empty, ibase != Natural::ONE) {
@@ -1724,6 +1714,13 @@ pub unsafe fn interpreter(
 									}
 								},
 								(false, true) => {	//non-empty normal
+									for d in ipart.iter().chain(fpart.iter()).chain(rpart.iter()) {
+										if *d >= ibase {
+											synerr!('\'', "Digit {} is too high for base {}", d, ibase);
+											alt = false;
+											continue 'cmd;
+										}
+									}
 									ipart.reverse();	//malachite needs reverse order
 									r = Rational::from_digits(&ibase, ipart, malachite::base::foer_sequences::FoerSequence::from_vecs(fpart, rpart));
 									if alt {r.neg_assign();}	//negative sign was set using alt
@@ -1741,24 +1738,24 @@ pub unsafe fn interpreter(
 											fpart = temp;
 										}
 									}
-
-									let mut ii = ipart.iter().rev().peekable();
-									let mut fi = fpart.iter().peekable();
-									let mut d = Natural::TWO;	//current place value
-
-									r = if let Some(n) = ii.next() {n.into()} else {Rational::ZERO};	//1! digit
-									//further place values are symmetrically reciprocal
-									for n in malachite::natural::exhaustive::exhaustive_natural_range_to_infinity(Natural::const_from(3)) {
-										if let Some(id) = ii.next() {
-											r += Rational::from(id * &d);
+									let (mut ipart_u, mut fpart_u) = (Vec::new(), Vec::new());
+									for (idx, n) in ipart.iter().rev().enumerate() {	//malachite needs reverse order
+										if let Ok(u) = u64::try_from(n) && u <= (idx+1) as u64 {ipart_u.push(u);}
+										else {
+											synerr!('\'', "Digit {} is too high for factoradic place {} away from the '.'", n, idx);
+											alt = false;
+											continue 'cmd;
 										}
-										if let Some(fd) = fi.next() {
-											r += Rational::from_naturals_ref(fd, &d);
-										}
-										if ii.peek().or_else(|| fi.peek()).is_none() {break;}
-										d *= n;
 									}
-
+									for (idx, n) in fpart.iter().enumerate() {
+										if let Ok(u) = u64::try_from(n) && u <= (idx+1) as u64 {fpart_u.push(u);}
+										else {
+											synerr!('\'', "Digit {} is too high for factoradic place {} away from the '.'", n, idx);
+											alt = false;
+											continue 'cmd;
+										}
+									}
+									r = unsafe { Rational::from_factoradic_digits(&ipart_u, &fpart_u).unwrap_unchecked() };
 									if alt {r.neg_assign();}	//negative sign was set using alt
 								}
 							}
