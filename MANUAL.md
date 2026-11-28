@@ -86,6 +86,7 @@ The interpreter is connected to a standard set of I/O streams: Input, output, an
 - `"` toggles string mode for printing commands. Output is written to a string buffer instead of the output stream, the closing `"` pushes the string to the stack.
 - `_clhist` clears the input history. Does nothing if no history is implemented.
 - **CLI:** uses the IO streams of the process, input uses an additional [line editor ⎋](https://crates.io/crates/linefeed) when running interactively in a supported terminal. The library may be attached to other streams using a generic interface.
+- *Corollary: `` {"`P"x} `` reproduces the same value.*
 
 
 # Numbers
@@ -386,8 +387,9 @@ Macro execution may also be delegated to a separate thread. Child threads are at
 - `NPa Q` breaks *a* levels of nested macro execution. `1Q` ends the macro it's in (mostly useless), `2Q` breaks the macro that called it, and so on. Repeated macros are considered as the same level, so all remaining repetitions are discarded.
 - `_trim` optimizes the interpreter's memory usage by reallocating everything to fit the current contents, leaving actual data unchanged. Use after operations that need large temporary values.
 - `_ptreq → BBz` inspects the top two values on the stack and returns `T` if they are shallow copies (of each other or another value).
+- `_clone` makes a deep copy of the top-of-stack. Should never be required, just provided for completeness.
 - `_dedup` searches the whole `State` for pairs of equal values that aren't shallow copies and replaces one with a shallow copy of the other. Requires O(n²) time, use sparingly.
-- `_clall` clears the entire current `State`. Thread handles are unaffected.
+- `_clall` clears the current `State`. Thread handles are unaffected.
 
 
 # OS commands

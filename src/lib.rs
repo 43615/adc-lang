@@ -1202,6 +1202,14 @@ pub unsafe fn interpreter(
 									}
 									else {synerr!('_', "Expected at least 2 values on the stack");}
 								},
+								b"clone" => {
+									if let Some(va) = st.mstk.last() {
+										push!((**va).clone());
+									}
+									else {
+										synerr!('_', "Stack is empty");
+									}
+								},
 								b"restrict" => {
 									#[cfg_attr(feature = "no_os", expect(unused_assignments))] { restrict = true; }
 								},
@@ -1448,9 +1456,7 @@ pub unsafe fn interpreter(
 						},
 						b'J' => {	//	poll thread status
 							if let Some(th) = st.regs.try_get(&ri).and_then(|reg| reg.th.as_ref()) {
-								let mut bz = BitVec::new();
-								bz.push(th.is_finished());
-								push!(B(bz));
+								push!(Value::bb(th.is_finished()));
 							}
 							else {
 								valerr!('J', "Register {} is not running a thread", reg_index_pretty(&ri));

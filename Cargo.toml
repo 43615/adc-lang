@@ -1,6 +1,6 @@
 [package]
 name = "adc-lang"
-version = "0.3.9"
+version = "0.3.10"
 edition = "2024"
 repository = "https://github.com/43615/adc-lang"
 description = "Array-oriented reimagining of dc, a terse RPN esolang"

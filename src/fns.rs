@@ -504,9 +504,7 @@ dya!(modu
 	B(ba), N(rb), _ => {	//extract bit
 		let ub = r_u(rb)?;
 		if let Some(b) = ba.get(ub) {
-			let mut bz = BitVec::new();
-			bz.push(*b);
-			Ok(B(bz))
+			Ok(Value::bb(*b))
 		}
 		else {
 			Err(Index(ub))
@@ -657,9 +655,7 @@ mon!(disc
 dya!(eq
 	B(ba), B(bb), _ => {
 		if ba.len() == bb.len() {
-			let mut bz = BitVec::new();
-			bz.push(ba == bb);
-			Ok(B(bz))
+			Ok(Value::bb(ba == bb))
 		}
 		else {
 			Ok(Value::bb(false))
@@ -667,15 +663,11 @@ dya!(eq
 	},
 
 	N(ra), N(rb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(ra == rb);
-		Ok(B(bz))
+		Ok(Value::bb(ra == rb))
 	},
 
 	S(sa), S(sb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(sa == sb);
-		Ok(B(bz))
+		Ok(Value::bb(sa == sb))
 	},
 
 	_, _, true => {	//infallible: false if types differ
@@ -686,24 +678,18 @@ dya!(eq
 //   <
 dya!(lt
 	B(ba), B(bb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(
+		Ok(Value::bb(
 			if ba.len() == bb.len() {ba < bb}
 			else {ba.len() < bb.len()}
-		);
-		Ok(B(bz))
+		))
 	},
 
 	N(ra), N(rb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(ra < rb);
-		Ok(B(bz))
+		Ok(Value::bb(ra < rb))
 	},
 
 	S(sa), S(sb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(str_cmp(sa, sb).is_lt());
-		Ok(B(bz))
+		Ok(Value::bb(str_cmp(sa, sb).is_lt()))
 	},
 
 	_, _, true => {	//infallible: false if types differ
@@ -714,24 +700,18 @@ dya!(lt
 //   >
 dya!(gt
 	B(ba), B(bb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(
+		Ok(Value::bb(
 			if ba.len() == bb.len() {ba > bb}
 			else {ba.len() > bb.len()}
-		);
-		Ok(B(bz))
+		))
 	},
 
 	N(ra), N(rb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(ra > rb);
-		Ok(B(bz))
+		Ok(Value::bb(ra > rb))
 	},
 
 	S(sa), S(sb), _ => {
-		let mut bz = BitVec::new();
-		bz.push(str_cmp(sa, sb).is_gt());
-		Ok(B(bz))
+		Ok(Value::bb(str_cmp(sa, sb).is_gt()))
 	},
 
 	_, _, true => {	//infallible: false if types differ

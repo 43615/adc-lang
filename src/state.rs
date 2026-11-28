@@ -110,7 +110,7 @@ impl Eq for Value {}
 
 impl Value {
 	pub(crate) fn bb(bit: bool) -> Self {
-		let mut v = BitVec::new();
+		let mut v = BitVec::with_capacity(1);
 		v.push(bit);
 		B(v)
 	}
